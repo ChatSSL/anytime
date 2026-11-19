@@ -1,7 +1,6 @@
 # Anytime
 
-학교 안에서 공강 시간이 맞는 재학생끼리 모임을 만들어 주는 플랫폼. 
-인공지능 융합 플랫폼 수업 팀 프로젝트 (팀 챗송심이).
+학교 안에서 공강 시간이 맞는 재학생끼리 모임을 만들어 주는 플랫폼. 인공지능 융합 플랫폼 수업 팀 프로젝트 (팀 챗송심이).
 
 ## 폴더 구조
 
@@ -10,16 +9,21 @@ anytime/
 ├── backend/            Spring Boot 3 (Java 17)
 ├── frontend/           Vite + React
 ├── docs/               ERD, DDL, API 명세
-└── docker-compose.yml  로컬 MySQL
+└── docker-compose.yml  로컬 MySQL 8.4
 ```
 
 ## 설치 (4명 모두)
 
-1. **JDK 17**: [Adoptium Temurin 17](https://adoptium.net/temurin/releases/?version=17) 설치. `java -version`으로 17이 나오는지 확인
-2. **IntelliJ IDEA**: Community 또는 학생 계정 Ultimate. `backend/` 폴더를 열면 Gradle 프로젝트로 인식된다
-3. **MySQL 8**: 둘 중 하나
+1. **JDK 17**: [Adoptium Temurin 17](https://adoptium.net/temurin/releases/?version=17) 설치 (Windows x64 .msi)
+   - 다른 버전 Java(21 등)가 이미 있으면 지우지 않아도 된다. 설치 화면의 Custom Setup에서 `Modify PATH variable`, `Set JAVA_HOME`을 끄고 설치한 뒤, IntelliJ에서 17을 고르면 된다
+   - Java가 없던 컴퓨터라면 두 옵션을 켜고 설치하고, `java -version`으로 17이 나오는지 확인
+2. **IntelliJ IDEA**: Community 또는 학생 계정 Ultimate
+   - 저장소 폴더(`anytime/`)를 열고, `backend/build.gradle`을 우클릭해 **Link Gradle Project**
+   - File → Project Structure → Project: SDK는 Temurin 17, Language level은 17
+   - Settings → Build Tools → Gradle: Gradle JVM은 Project SDK(17)
+3. **MySQL 8.4 LTS**: 둘 중 하나
    - Docker Desktop이 있으면 저장소 루트에서 `docker compose up -d`
-   - 없으면 MySQL 8을 직접 설치하고 아래 SQL 실행
+   - 없으면 [MySQL Community Server](https://dev.mysql.com/downloads/mysql/)에서 **8.4 LTS** Windows MSI를 받아 설치 (26.x 같은 최신 Innovation 버전 말고 8.4). 설치 후 Configurator에서 Development Computer, 포트 3306, root 비밀번호 설정, Windows 서비스로 실행. 그다음 시작 메뉴의 MySQL 8.4 Command Line Client에서 아래 SQL 실행
      ```sql
      CREATE DATABASE anytime DEFAULT CHARACTER SET utf8mb4;
      CREATE USER 'anytime'@'localhost' IDENTIFIED BY 'anytime';
@@ -32,7 +36,8 @@ anytime/
 ```bash
 # 백엔드 (http://localhost:8080)
 cd backend
-./gradlew bootRun        # Windows: gradlew.bat bootRun
+./gradlew bootRun        # Windows PowerShell: .\gradlew.bat bootRun
+# 'Started AnytimeApplication'이 뜨면 성공. 서버가 켜져 있는 동안 이 터미널은 입력이 안 되니, 다른 명령은 새 터미널에서
 
 # 확인
 curl http://localhost:8080/api/health   # {"status":"ok"}
