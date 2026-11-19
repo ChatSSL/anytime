@@ -1,7 +1,7 @@
 # 로컬 개발용 MySQL 8. 실행: docker compose up -d
 services:
   mysql:
-    image: mysql:8.0
+    image: mysql:8.4
     container_name: anytime-mysql
     environment:
       MYSQL_DATABASE: anytime
