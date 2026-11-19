@@ -1,0 +1,19 @@
+# 로컬 개발용 MySQL 8. 실행: docker compose up -d
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: anytime-mysql
+    environment:
+      MYSQL_DATABASE: anytime
+      MYSQL_USER: anytime
+      MYSQL_PASSWORD: anytime
+      MYSQL_ROOT_PASSWORD: root
+      TZ: Asia/Seoul
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - anytime-mysql-data:/var/lib/mysql
+
+volumes:
+  anytime-mysql-data:

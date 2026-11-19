@@ -1,0 +1,29 @@
+# 비밀 정보
+.env
+*.env
+!.env.example
+application-secret.yml
+
+# Gradle / Java
+backend/.gradle/
+backend/build/
+!backend/gradle/wrapper/gradle-wrapper.jar
+*.class
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+out/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# 프론트 빌드를 Spring static으로 복사한 결과물 (19단계에서 생성)
+backend/src/main/resources/static/
+
+# OS
+.DS_Store
+Thumbs.db
