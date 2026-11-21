@@ -8,7 +8,7 @@
 anytime/
 ├── backend/            Spring Boot 3 (Java 17)
 ├── frontend/           Vite + React
-├── docs/               ERD, DDL, API 명세
+├── docs/               ERD, API 명세
 └── docker-compose.yml  로컬 MySQL 8.4
 ```
 
@@ -66,7 +66,7 @@ DB 접속 정보는 기본값이 `anytime / anytime`이다. 바꾸려면 `.env.e
 
 | 파일 | 담당 |
 | --- | --- |
-| 엔티티(`domain/`), `data.sql` | 1번 |
+| 엔티티(`domain/`), `db/schema.sql`, `db/data.sql` | 1번 |
 | `config/SecurityConfig.java` | 2번 |
 | 알림 공통 메서드 `notify(...)` | 3번 |
 
@@ -77,8 +77,8 @@ DB 접속 정보는 기본값이 `anytime / anytime`이다. 바꾸려면 `.env.e
 ## 현재 상태
 
 - [x] 1단계: 저장소, 뼈대, 설치 가이드
-- [ ] 2단계: DB 설계 (docs/)
-- [ ] 3단계: 엔티티·시드
+- [x] 2단계: DB 설계 ([docs/erd.md](docs/erd.md))
+- [x] 3단계: 엔티티·리포지토리·시드 (실행할 때마다 DB가 시드로 초기화됨. [docs/README.md](docs/README.md) 참고)
 - [ ] 4단계: 공통 틀 (예외 응답 `{code, message}`, Swagger)
 - [ ] 5단계: 이메일 인증
 
