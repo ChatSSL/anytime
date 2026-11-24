@@ -44,6 +44,10 @@ app:
   email:
     hash-key: ${EMAIL_HASH_KEY:}
     enc-key: ${EMAIL_ENC_KEY:}
+  jwt:
+    secret: ${JWT_SECRET:}
+    access-minutes: 15
+    refresh-days: 14
 
 logging:
   level:
@@ -67,6 +71,11 @@ app:
   email:
     hash-key: ${EMAIL_HASH_KEY:local-dev-email-hash-key}
     enc-key: ${EMAIL_ENC_KEY:local-dev-email-enc-key}
+  jwt:
+    secret: ${JWT_SECRET:local-dev-jwt-secret}
+  auth:
+    # 로컬 전용: POST /api/auth/dev-login {"userId": 1} 로 시드 사용자 토큰을 바로 받는다
+    dev-login: true
 
 ---
 spring:

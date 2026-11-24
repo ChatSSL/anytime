@@ -35,6 +35,11 @@ public enum ErrorCode {
     AUTH_CODE_MISMATCH(HttpStatus.BAD_REQUEST, "인증번호가 맞지 않아요"),
     AUTH_CODE_LOCKED(HttpStatus.TOO_MANY_REQUESTS, "5번 틀렸어요. 인증번호를 다시 받아 주세요"),
 
+    // 로그인 토큰 (7단계). 프론트는 AUTH_TOKEN_EXPIRED를 받으면 /auth/refresh 후 다시 요청한다
+    AUTH_TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "로그인이 만료됐어요"),
+    AUTH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "로그인 정보가 올바르지 않아요"),
+    AUTH_REFRESH_INVALID(HttpStatus.UNAUTHORIZED, "다시 로그인해 주세요"),
+
     // 모임
     ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "모임을 찾을 수 없어요");
 

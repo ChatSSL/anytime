@@ -191,6 +191,12 @@ erDiagram
         tinyint fail_count
         datetime expires_at
     }
+    refresh_tokens {
+        char token_hash PK
+        bigint user_id FK
+        datetime expires_at
+    }
+    users ||--o{ refresh_tokens : "로그인"
 ```
 
 ## 설계 메모
@@ -202,6 +208,7 @@ erDiagram
 | `user_interests` 테이블 추가 (19개) | 피드백: 관심사마다 공개 여부를 정할 수 있어야 함. 추천 이유와 AI 미션에는 `is_public = TRUE`만 사용 |
 | `users.email` 대신 `email_hash` + `email_enc` | 피드백: 개인정보 암호화. 로그인 조회와 중복 검사는 해시로, 메일 발송 때만 암호문을 복호화. 해시는 단순 SHA-256이 아니라 서버 비밀키(`EMAIL_HASH_KEY`)를 섞은 HMAC-SHA256. 학교 이메일은 패턴이 단순해서 단순 해시는 전수 대입으로 되돌릴 수 있다 |
 | `email_codes`에 `fail_count`, 코드도 해시로 저장 | 5회 실패 시 재발송 규칙, 이메일 원문을 남기지 않기 위해 |
+| `refresh_tokens` 테이블 추가 (7단계) | 로그아웃 시 리프레시 토큰 폐기, 재발급 때 회전(쓴 토큰 삭제). 토큰 원문 대신 SHA-256 해시 저장 |
 | `ratings.applied_at` 추가 | 피드백: 소규모 모임에서 평가자 유추 방지. 평가를 모아서 크론으로 반영 |
 | `dm_requests`에 시간·활동·메시지 추가 | 프론트 `requestDm(userId, slot, activity, message)` 인자 그대로 |
 | `dm_requests.chat_id` 추가 | 수락해서 만든 DM 채팅방을 기록. 같은 두 사람의 DM을 또 만들기 전에 이걸로 확인 |
