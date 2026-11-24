@@ -1,0 +1,27 @@
+# 서버용 MySQL 8.4. 서버의 /opt/anytime 에 복사되어 쓰인다 (setup-server.sh가 복사함)
+# 비밀번호는 같은 폴더의 .env 에서 읽는다. .env는 서버에만 있고 저장소에는 없다
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: anytime-mysql
+    restart: unless-stopped          # 서버가 재부팅돼도 MySQL이 다시 켜진다
+    environment:
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      TZ: Asia/Seoul
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      # 1GB 메모리 서버용으로 줄인 설정
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+    ports:
+      # 127.0.0.1에만 연다: 서버 안의 Spring만 접속하고, 인터넷에서는 3306이 안 보인다
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - anytime-mysql-data:/var/lib/mysql
+
+volumes:
+  anytime-mysql-data:
