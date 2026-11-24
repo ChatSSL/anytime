@@ -19,6 +19,7 @@ DROP TABLE IF EXISTS class_blocks;
 DROP TABLE IF EXISTS wanted_slots;
 DROP TABLE IF EXISTS user_interests;
 DROP TABLE IF EXISTS email_codes;
+DROP TABLE IF EXISTS refresh_tokens;
 DROP TABLE IF EXISTS users;
 SET FOREIGN_KEY_CHECKS = 1;
 
@@ -330,4 +331,16 @@ CREATE TABLE email_codes (
     expires_at  DATETIME  NOT NULL,
     created_at  DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (email_hash)
+);
+
+-- 리프레시 토큰 (7단계). 로그아웃·재발급 때 지워서 다시 못 쓰게 한다.
+-- 토큰 원문은 저장하지 않고 SHA-256 해시만 둔다. 액세스 토큰은 저장하지 않는다(15분 만료).
+CREATE TABLE refresh_tokens (
+    token_hash  CHAR(64)  NOT NULL,
+    user_id     BIGINT    NOT NULL,
+    expires_at  DATETIME  NOT NULL,
+    created_at  DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (token_hash),
+    KEY idx_refresh_tokens_user (user_id),
+    CONSTRAINT fk_refresh_tokens_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 );

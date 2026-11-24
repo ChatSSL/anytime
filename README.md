@@ -58,7 +58,7 @@ DB 접속 정보는 기본값이 `anytime / anytime`이다. 바꾸려면 `.env.e
 - **Swagger**: 서버를 띄우고 http://localhost:8080/swagger-ui.html 에서 모든 API를 보고 바로 호출해 볼 수 있다
 - **에러 응답**은 모두 `{"code": "ROOM_NOT_FOUND", "message": "모임을 찾을 수 없어요"}` 모양이다. 서비스에서 실패하면 `throw new ApiException(ErrorCode.ROOM_NOT_FOUND)`처럼 던진다. 새 에러는 `common/ErrorCode.java`에 추가한다
 - **입력 검사**: 요청 DTO에 `@NotBlank`, `@Size` 등을 달고 컨트롤러에서 `@Valid`를 붙이면 실패 시 자동으로 `INVALID_INPUT`이 나간다
-- **현재 사용자**: 컨트롤러 파라미터에 `@CurrentUserId Long userId`를 쓴다. 로그인(7단계) 전에는 `X-User-Id` 헤더 값, 헤더가 없으면 1(데모유저)이다. Swagger나 curl에서 다른 사용자로 테스트하려면 `X-User-Id: 2`를 붙인다
+- **현재 사용자**: 컨트롤러 파라미터에 `@CurrentUserId Long userId`를 쓴다 (`@AuthenticationPrincipal Long userId`도 같은 값). JWT 액세스 토큰의 사용자 id이고, 토큰이 없으면 401이 나가므로 null 검사는 필요 없다. 자세한 건 아래 7단계
 - **경로**는 `/api/...`로 시작한다. 요청마다 서버 로그에 `GET /api/rooms -> 200 (12ms)`가 찍힌다
 
 ## 이메일 인증 (5단계)
@@ -71,6 +71,40 @@ DB 접속 정보는 기본값이 `anytime / anytime`이다. 바꾸려면 `.env.e
   2. Google 계정 → 보안 → 앱 비밀번호에서 새 비밀번호(16자리)를 만든다
   3. IntelliJ 실행 설정(Run → Edit Configurations)의 Environment variables나 서버의 `.env`에 `MAIL_USERNAME=보내는주소@gmail.com`, `MAIL_APP_PASSWORD=16자리`를 넣는다
 - 이메일은 원문으로 저장하지 않는다. 조회용 HMAC 해시(`EMAIL_HASH_KEY`)와 메일 발송용 AES 암호문(`EMAIL_ENC_KEY`)으로 저장한다. 로컬은 기본 키가 들어 있고, 서버에는 반드시 다른 값을 넣는다
+
+## 로그인 토큰 (7단계, JWT)
+
+- `POST /api/auth/email/verify`가 성공하면 `{userId, newUser, accessToken, refreshToken, expiresIn}`을 준다
+- 그 뒤 모든 `/api/**` 요청에 `Authorization: Bearer <accessToken>`을 붙인다. 토큰 없이 열린 경로는 `/api/health`, `/api/auth/*`뿐이다 (`config/SecurityConfig.java`의 `PUBLIC_API`)
+- 액세스 토큰 15분, 리프레시 토큰 14일. 만료되면 `401 AUTH_TOKEN_EXPIRED` → `POST /api/auth/refresh {"refreshToken"}`로 새 한 쌍을 받는다. 쓴 리프레시 토큰은 다시 못 쓴다
+- `POST /api/auth/logout {"refreshToken"}`: 리프레시 토큰 폐기 (`refresh_tokens` 테이블에서 삭제)
+- 401 응답 code: `UNAUTHORIZED`(토큰 없음), `AUTH_TOKEN_EXPIRED`(만료), `AUTH_TOKEN_INVALID`(위조·형식 오류), `AUTH_REFRESH_INVALID`(리프레시 실패, 다시 인증)
+- 서버의 `JWT_SECRET`은 `setup-server.sh`가 만든다. 로컬은 기본값이 들어 있다
+
+**컨트롤러에서 현재 사용자 꺼내기**
+
+```java
+@GetMapping("/api/me")
+public MeResponse me(@CurrentUserId Long userId) { ... }
+// 또는 Spring Security 기본 방식
+public MeResponse me(@AuthenticationPrincipal Long userId) { ... }
+```
+
+**로컬에서 테스트할 때** (예전 `X-User-Id` 헤더 대신)
+
+1. Swagger에서 `POST /api/auth/dev-login` `{"userId": 1}` 실행 → `accessToken` 복사 (1 = 데모유저, 시드 사용자 아무나 가능)
+2. Swagger 오른쪽 위 **Authorize**에 붙여 넣으면 이후 요청에 토큰이 붙는다
+3. curl: `curl -H "Authorization: Bearer <토큰>" http://localhost:8080/api/...`
+
+`dev-login`은 local 프로필에만 있고 서버(prod)에는 없다.
+
+**프론트에서 API 부르기**: `src/api/client.ts`의 `api.get/post/put/patch/delete`를 쓴다. 토큰 헤더, 만료 시 자동 재발급, 에러 → 토스트가 다 들어 있다.
+
+```ts
+import { api } from './api/client';
+const me = await api.get<Me>('/me');                       // 실패하면 서버 message가 토스트로 뜬다
+await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이 화면에서 직접 처리할 때
+```
 
 ## 브랜치와 PR 규칙
 
@@ -103,6 +137,4 @@ DB 접속 정보는 기본값이 `anytime / anytime`이다. 바꾸려면 `.env.e
 - [x] 4단계: 공통 틀 (에러 응답 `{code, message}`, 입력 검사, Swagger, 요청 로그, `@CurrentUserId`)
 - [x] 5단계: 이메일 인증 (발송·확인 API, 이메일 HMAC 해시 + AES 암호화)
 - [x] 6단계: 서버 배포 ([docs/deploy.md](docs/deploy.md)). 배포는 Git Bash에서 `./deploy/deploy.sh`
-
-
-`SecurityConfig`는 지금 모든 요청을 허용하는 임시 설정이다. 7단계에서 JWT 설정으로 교체한다.
+- [x] 7단계: JWT + Security, 프론트 `src/api/client.ts`와 인증 화면 연결

@@ -1,18 +1,21 @@
 package com.chatssl.anytime.common;
 
 import org.springframework.core.MethodParameter;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.bind.support.WebDataBinderFactory;
 import org.springframework.web.context.request.NativeWebRequest;
 import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.method.support.ModelAndViewContainer;
 
-/** 임시 구현: X-User-Id 헤더, 없으면 데모유저(1). 7단계에서 JWT로 교체한다. */
+/**
+ * @CurrentUserId Long userId 에 JWT의 사용자 id를 넣는다 (7단계).
+ * JwtAuthFilter가 SecurityContext에 넣어 둔 principal(Long)을 꺼낸다.
+ * 로그인하지 않은 요청이면 401 UNAUTHORIZED.
+ */
 @Component
 public class CurrentUserIdResolver implements HandlerMethodArgumentResolver {
-
-    public static final String HEADER = "X-User-Id";
-    private static final long DEMO_USER_ID = 1L;
 
     @Override
     public boolean supportsParameter(MethodParameter parameter) {
@@ -23,14 +26,10 @@ public class CurrentUserIdResolver implements HandlerMethodArgumentResolver {
     @Override
     public Object resolveArgument(MethodParameter parameter, ModelAndViewContainer mavContainer,
                                   NativeWebRequest webRequest, WebDataBinderFactory binderFactory) {
-        String header = webRequest.getHeader(HEADER);
-        if (header == null || header.isBlank()) {
-            return DEMO_USER_ID;
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() instanceof Long userId) {
+            return userId;
         }
-        try {
-            return Long.parseLong(header.trim());
-        } catch (NumberFormatException e) {
-            throw new ApiException(ErrorCode.UNAUTHORIZED);
-        }
+        throw new ApiException(ErrorCode.UNAUTHORIZED);
     }
 }

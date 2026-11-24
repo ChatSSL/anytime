@@ -4,6 +4,8 @@ import { initialState, SEED_VERSION, USERS } from './data';
 import { icebreaker } from './lib/ai';
 import { hm } from './lib/time';
 import { ME_ID, roomChat, userById } from './lib/derive';
+import { setApiHandlers } from './api/client';
+import { authApi } from './api/auth';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -203,7 +205,7 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
     setNotifSetting: (k: string, v: boolean) => update((d) => { d.settings.notif[k] = v; }),
     setSetting: (k: 'ads' | 'quiet' | 'premium', v: boolean) => update((d) => { d.settings[k] = v; }),
     setSanction: (v: 0 | 1 | 2 | 3) => update((d) => { d.sanction = v; }),
-    reset: () => { localStorage.removeItem(KEY); location.hash = '#/'; location.reload(); },
+    reset: async () => { await authApi.logout(); localStorage.removeItem(KEY); location.hash = '#/'; location.reload(); },
     initial: () => initialState(),
     users: USERS,
   };
@@ -225,6 +227,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2600);
   }, []);
   const a = useMemo(() => makeActions(update, () => ref.current, toast), [update, toast]);
+
+  // 서버 에러는 토스트로, 리프레시까지 만료되면 인증 화면으로 (App이 verified=false면 /auth로 보낸다)
+  useEffect(() => {
+    setApiHandlers({
+      onError: (message) => toast(message, 'err'),
+      onLoggedOut: () => { update((d) => { d.verified = false; }); toast('로그인이 만료됐어요. 다시 인증해 주세요', 'info'); },
+    });
+  }, [toast, update]);
   const value = useMemo(() => ({ s, update, toast, toasts, a }), [s, update, toast, toasts, a]);
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }
