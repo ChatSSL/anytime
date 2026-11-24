@@ -52,6 +52,34 @@ cp deploy/deploy.env.example deploy/deploy.env
 
 `/` 주소는 아직 404(Whitelabel Error Page)가 맞다. 프론트는 19단계에서 같이 올린다.
 
+## 팀원이 배포할 수 있게 하기
+
+서버를 만들 때 받은 `.pem` 은 서버 마스터키라 **다른 사람에게 보내지 않는다**. 대신 팀원마다 자기 키를 만들어 공개 키(자물쇠)만 보내고, 서버 관리자가 그걸 등록한다. 공개 키는 남에게 보여도 괜찮다.
+
+**팀원** (Git Bash, 처음 한 번)
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/anytime -N ""
+cat ~/.ssh/anytime.pub          # 나온 한 줄(ssh-ed25519 AAAA...)을 서버 관리자에게 보낸다
+curl https://checkip.amazonaws.com   # 지금 내 IP. 이것도 같이 보낸다
+
+cp deploy/deploy.env.example deploy/deploy.env
+# deploy/deploy.env 에 SERVER_HOST=<공인IP>, SSH_KEY=~/.ssh/anytime 을 적는다
+```
+
+**서버 관리자**
+
+1. 공개 키 등록
+   ```bash
+   ssh -i ~/.ssh/anytime.pem ubuntu@<공인IP>
+   echo "받은 한 줄" >> ~/.ssh/authorized_keys
+   ```
+2. AWS 보안 그룹의 SSH(22) 인바운드 규칙에 받은 IP를 `IP/32` 로 추가한다. 설명 칸에 이름을 적어 두면 나중에 지우기 쉽다
+
+팀원은 `ssh -i ~/.ssh/anytime ubuntu@<공인IP>` 로 접속되는지 확인한 뒤 배포한다. 와이파이가 바뀌어 IP가 달라지면 2번만 다시 한다.
+
+팀원이 빠지면 서버의 `~/.ssh/authorized_keys` 에서 그 사람의 줄을 지우고, 보안 그룹에서 그 IP를 지운다.
+
 ## 평소 배포 (3·4번 주자 포함)
 
 ```bash
@@ -81,6 +109,7 @@ schema.sql에 테이블이나 컬럼이 바뀐 PR이 머지되면 평소 배포�
 | --- | --- |
 | `UNPROTECTED PRIVATE KEY FILE` | PowerShell에서 `icacls $HOME\.ssh\anytime.pem /inheritance:r /grant:r "$($env:USERNAME):R"` |
 | `Connection timed out` (ssh) | 보안 그룹 22번에 지금 내 IP가 있는지 확인 (집·학교 와이파이마다 IP가 다르다) |
+| `Permission denied (publickey)` | 내 공개 키가 서버 `authorized_keys` 에 등록됐는지, `deploy.env` 의 `SSH_KEY` 경로가 맞는지 확인 |
 | 브라우저에서 `/api/health` 가 안 열림 | 보안 그룹 80번 확인. 서버 안에서는 되는지 `ssh ... curl localhost/api/health` |
 | `서버가 3분 안에 뜨지 않았다` | 함께 나온 로그의 맨 아래 `Caused by` 를 본다. `Communications link failure` 면 MySQL이 안 떠 있는 것: 서버에서 `cd /opt/anytime && sudo docker compose up -d` |
 | 빌드 실패 | 먼저 로컬에서 `cd backend && ./gradlew bootJar` 가 되는지 본다 |
