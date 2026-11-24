@@ -98,9 +98,11 @@ schema.sql에 테이블이나 컬럼이 바뀐 PR이 머지되면 평소 배포�
 
 ## 서버 `.env`
 
-`setup` 이 서버에 `/opt/anytime/.env` 를 만들고 DB 비밀번호와 `JWT_SECRET` 을 무작위로 채운다. 이 파일은 서버에만 있고 저장소·팀방에 올리지 않는다.
+`setup` 이 서버에 `/opt/anytime/.env` 를 만들고 DB 비밀번호, `JWT_SECRET`, `EMAIL_HASH_KEY`, `EMAIL_ENC_KEY` 를 무작위로 채운다. 이 파일은 서버에만 있고 저장소·팀방에 올리지 않는다.
 
-이메일 인증(5단계)을 서버에서 쓰려면 `MAIL_USERNAME`, `MAIL_APP_PASSWORD`, `EMAIL_HASH_KEY`, `EMAIL_ENC_KEY` 를 서버에서 직접 채운다.
+`EMAIL_HASH_KEY`, `EMAIL_ENC_KEY` 는 가입한 사용자가 생긴 뒤에는 **절대 바꾸지 않는다**. 바꾸면 기존 사용자가 로그인할 수 없고 저장된 이메일을 복호화할 수 없다. 바꿔야 하면 `./deploy/deploy.sh reset` 으로 DB도 같이 초기화한다.
+
+인증 메일을 서버에서 실제로 보내려면 `MAIL_USERNAME`, `MAIL_APP_PASSWORD` 를 서버에서 직접 채운다 (`nano /opt/anytime/.env` 후 `sudo systemctl restart anytime`).
 
 ## 막힐 때
 
