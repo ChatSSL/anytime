@@ -8,7 +8,8 @@
 anytime/
 ├── backend/            Spring Boot 3 (Java 17)
 ├── frontend/           Vite + React
-├── docs/               ERD, API 명세
+├── docs/               ERD, API 명세, 배포 가이드
+├── deploy/             서버 배포 스크립트 (docs/deploy.md 참고)
 └── docker-compose.yml  로컬 MySQL 8.4
 ```
 
@@ -98,7 +99,10 @@ DB 접속 정보는 기본값이 `anytime / anytime`이다. 바꾸려면 `.env.e
 - [x] 1단계: 저장소, 뼈대, 설치 가이드
 - [x] 2단계: DB 설계 ([docs/erd.md](docs/erd.md))
 - [x] 3단계: 엔티티·리포지토리·시드 (실행할 때마다 DB가 시드로 초기화됨. [docs/README.md](docs/README.md) 참고)
+
 - [x] 4단계: 공통 틀 (에러 응답 `{code, message}`, 입력 검사, Swagger, 요청 로그, `@CurrentUserId`)
 - [x] 5단계: 이메일 인증 (발송·확인 API, 이메일 HMAC 해시 + AES 암호화)
+- [x] 6단계: 서버 배포 ([docs/deploy.md](docs/deploy.md)). 배포는 Git Bash에서 `./deploy/deploy.sh`
+
 
 `SecurityConfig`는 지금 모든 요청을 허용하는 임시 설정이다. 7단계에서 JWT 설정으로 교체한다.
