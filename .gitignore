@@ -27,3 +27,11 @@ backend/src/main/resources/static/
 # OS
 .DS_Store
 Thumbs.db
+
+# VS Code / Gradle
+.gradle/
+bin/
+
+# VS Code / Gradle
+.gradle/
+bin/

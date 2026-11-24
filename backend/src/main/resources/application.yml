@@ -31,6 +31,24 @@ spring:
 server:
   port: ${PORT:8080}
 
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+  api-docs:
+    path: /v3/api-docs
+
+app:
+  auth:
+    allowed-domains: dankook.ac.kr   # 학교 이메일 도메인. 여러 개면 쉼표로
+  email:
+    hash-key: ${EMAIL_HASH_KEY:}
+    enc-key: ${EMAIL_ENC_KEY:}
+
+logging:
+  level:
+    com.chatssl.anytime: INFO
+
 ---
 spring:
   config:
@@ -43,6 +61,12 @@ spring:
       # always: 실행할 때마다 테이블을 다시 만들고 시드를 넣는다 (로컬 기본)
       # 데이터를 남기고 싶으면 SQL_INIT_MODE=never로 실행
       mode: ${SQL_INIT_MODE:always}
+
+# 로컬 전용 기본 키. 서버(prod)에서는 반드시 환경 변수로 다른 값을 넣는다
+app:
+  email:
+    hash-key: ${EMAIL_HASH_KEY:local-dev-email-hash-key}
+    enc-key: ${EMAIL_ENC_KEY:local-dev-email-enc-key}
 
 ---
 spring:

@@ -23,12 +23,18 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-mail'
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.9'
     runtimeOnly 'com.mysql:mysql-connector-j'
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+// Windows(JDK 17)에서 한글 문자열이 깨지지 않게
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
 }
 
 tasks.named('test') {
