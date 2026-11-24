@@ -59,9 +59,12 @@ DB_USER=anytime
 DB_PASSWORD=$(openssl rand -hex 16)
 DB_ROOT_PASSWORD=$(openssl rand -hex 16)
 
-# 5단계 이메일 인증: 팀방에서 공유한 값으로 채운다
-EMAIL_HASH_KEY=
-EMAIL_ENC_KEY=
+# 5단계 이메일 암호화 키. 비어 있으면 서버가 안 켜진다
+# 가입한 사용자가 생긴 뒤에는 절대 바꾸지 않는다 (바꾸면 로그인 불가, 저장된 이메일 복호화 불가)
+EMAIL_HASH_KEY=$(openssl rand -hex 32)
+EMAIL_ENC_KEY=$(openssl rand -hex 32)
+
+# 5단계 메일 발송: 팀 Gmail 주소와 앱 비밀번호를 채운다 (비어 있으면 서버는 켜지지만 인증 메일이 안 간다)
 MAIL_USERNAME=
 MAIL_APP_PASSWORD=
 
