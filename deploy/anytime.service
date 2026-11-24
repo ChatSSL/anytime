@@ -1,0 +1,29 @@
+# Spring Boot jar를 서버에서 계속 켜 두는 설정 (systemd)
+# 서버의 /etc/systemd/system/anytime.service 로 복사된다 (setup-server.sh가 복사함)
+# 자주 쓰는 명령:
+#   sudo systemctl status anytime      상태 보기
+#   sudo systemctl restart anytime     재시작
+#   sudo journalctl -u anytime -f      로그 실시간 보기
+[Unit]
+Description=Anytime (Spring Boot)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=anytime
+WorkingDirectory=/opt/anytime
+Environment=SPRING_PROFILES_ACTIVE=prod
+Environment=PORT=80
+# DB 비밀번호, JWT 비밀키 등은 여기서 읽는다
+EnvironmentFile=/opt/anytime/.env
+# 1GB 서버라 Java 메모리 상한을 400MB로 둔다. 크론(18단계)이 서버 시간 기준이라 시간대를 고정한다
+ExecStart=/usr/bin/java -Xms128m -Xmx400m -Duser.timezone=Asia/Seoul -Dfile.encoding=UTF-8 -jar /opt/anytime/anytime.jar
+# root가 아닌 사용자로 80번 포트를 쓸 수 있게 한다
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+# 죽으면 5초 뒤 다시 켠다 (서버 부팅 직후 MySQL이 늦게 뜰 때도 이걸로 해결된다)
+Restart=on-failure
+RestartSec=5
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target
