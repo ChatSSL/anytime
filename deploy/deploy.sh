@@ -5,6 +5,9 @@
 #   ./deploy/deploy.sh reset   jar를 올리고 DB를 schema.sql + data.sql로 초기화 (첫 배포, 발표 직전)
 #   ./deploy/deploy.sh         jar만 새로 올린다. DB 데이터는 그대로 (평소 배포)
 #
+# 배포할 때마다 프론트(frontend/)를 빌드해서 jar 안(static/)에 같이 넣는다. http://서버IP 로 화면이 뜬다.
+# 백엔드만 급히 올릴 때는 SKIP_FRONTEND=1 ./deploy/deploy.sh (이때는 jar에 화면이 빠진다)
+#
 # 서버 주소와 키 경로는 deploy/deploy.env 에 적는다 (deploy.env.example 참고)
 set -euo pipefail
 
@@ -49,6 +52,20 @@ case "$MODE" in
     ;;
 esac
 
+STATIC=backend/src/main/resources/static
+if [ "${SKIP_FRONTEND:-0}" = 1 ]; then
+  echo "==> 프론트 빌드 건너뜀 (SKIP_FRONTEND=1)"
+  rm -rf "$STATIC"
+else
+  echo "==> 프론트 빌드 (frontend/ -> $STATIC)"
+  command -v npm >/dev/null || { echo "npm이 없다. Node.js 18 이상을 설치한다" >&2; exit 1; }
+  (cd frontend && npm ci --no-audit --no-fund --loglevel=error && npm run build)
+  rm -rf "$STATIC"
+  mkdir -p "$STATIC"
+  cp -R frontend/dist/. "$STATIC/"
+  [ -f "$STATIC/index.html" ] || { echo "프론트 빌드 결과에 index.html이 없다" >&2; exit 1; }
+fi
+
 echo "==> jar 빌드"
 (cd backend && ./gradlew bootJar -q)
 JAR=$(ls backend/build/libs/*.jar | grep -v -- '-plain\.jar$' | head -n 1)
@@ -82,7 +99,7 @@ fi
 
 if [ "$OK" = 1 ]; then
   echo
-  echo "배포 끝: http://$SERVER_HOST/api/health"
+  echo "배포 끝: http://$SERVER_HOST (화면), http://$SERVER_HOST/api/health"
 else
   echo >&2
   echo "서버가 3분 안에 뜨지 않았다. 마지막 로그:" >&2

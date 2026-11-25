@@ -31,7 +31,3 @@ Thumbs.db
 # VS Code / Gradle
 .gradle/
 bin/
-
-# VS Code / Gradle
-.gradle/
-bin/
