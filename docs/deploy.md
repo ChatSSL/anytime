@@ -50,7 +50,7 @@ cp deploy/deploy.env.example deploy/deploy.env
 
 `배포 끝: http://<공인IP>/api/health` 가 나오면 브라우저에서 그 주소를 열어 `{"status":"ok"}` 를 확인한다. 휴대폰 LTE로도 열어 본다.
 
-`/` 주소는 아직 404(Whitelabel Error Page)가 맞다. 프론트는 19단계에서 같이 올린다.
+`http://<공인IP>` 를 열면 앱 화면이 뜬다. 배포 스크립트가 매번 `frontend/` 를 빌드해서 jar 안(`static/`)에 같이 넣기 때문이다. 그래서 배포하는 컴퓨터에 Node.js 18 이상이 있어야 한다. 백엔드만 급히 올릴 때는 `SKIP_FRONTEND=1 ./deploy/deploy.sh` (이때는 화면이 빠진 jar가 올라간다).
 
 ## 팀원이 배포할 수 있게 하기
 
