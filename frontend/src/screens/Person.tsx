@@ -1,26 +1,43 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useApp } from '../store';
-import { Slot } from '../types';
+import { Slot, User } from '../types';
 import { freeSlots, intersectAll, slotKey, slotLabel } from '../lib/time';
 import { sharedConcepts } from '../lib/ai';
-import { MannerGauge, Avatar, Chip, Empty, FreeBadge, Icon, Sheet, TopBar } from '../components/ui';
+import { MannerGauge, Avatar, Chip, Empty, FreeBadge, Icon, Sheet, Skeleton, TopBar } from '../components/ui';
 import { SafetyMenu } from '../components/safety';
 import { dmChat, mannerLabel, meUser, userById, wantedSlots } from '../lib/derive';
+import { meApi } from '../api/me';
+import { toUser } from '../api/recommend';
+
+const isServerId = (id?: string) => !!id && /^\d+$/.test(id);
 
 export function PersonDetail() {
   const { id } = useParams(); const nav = useNavigate(); const [sp] = useSearchParams();
   const { s, a } = useApp();
-  const u = id ? userById(s, id) : undefined;
+  const known = id ? userById(s, id) : undefined;
+  // 추천 목록에 없는 서버 사용자(숫자 id)는 공개 프로필만 받아 온다. 차단 관계면 서버가 404를 준다
+  const [remote, setRemote] = useState<User | null | undefined>(undefined);
+  useEffect(() => {
+    if (known || !isServerId(id)) return;
+    setRemote(undefined);
+    meApi.user(Number(id)).then((p) => setRemote(toUser(p))).catch(() => setRemote(null));
+  }, [id, known]);
+  const u = known ?? remote ?? undefined;
   const [req, setReq] = useState(false); const [menu, setMenu] = useState(false);
   const [slot, setSlot] = useState(''); const [act, setAct] = useState(''); const [msg, setMsg] = useState('');
   useEffect(() => { if (sp.get('request')) setReq(true); }, [sp]);
 
+  if (!known && isServerId(id) && remote === undefined) {
+    return <div className="page narrow"><TopBar title="" /><div className="card col"><Skeleton h={44} w={44} /><Skeleton h={18} w="60%" /><Skeleton h={14} /></div></div>;
+  }
   if (!u || u.id === 'staff' || s.blocks.includes(u.id)) {
     return <div className="page"><TopBar title="프로필" /><Empty title="볼 수 없는 프로필이에요" text="차단했거나 없는 사용자예요." action={<button className="btn m" onClick={() => nav('/home')}>홈으로</button>} /></div>;
   }
-  const slots: Slot[] = intersectAll(wantedSlots(s), freeSlots(u.classes));
-  const shared = sharedConcepts(meUser(s).interests, u.interests);
+  // 서버 사용자는 시간표를 받지 않으므로 서버가 계산한 겹치는 공강을 쓴다. 시드 사용자(로그인 전 시연)는 직접 계산한다
+  const reco = s.serverPeople?.find((p) => p.user.id === u.id);
+  const slots: Slot[] = reco ? reco.slots : intersectAll(wantedSlots(s), freeSlots(u.classes));
+  const shared = reco ? reco.shared : sharedConcepts(meUser(s).interests, u.interests);
   const sent = s.sentRequests.includes(u.id), dm = dmChat(s, u.id);
   const acts = [...new Set([...shared, ...u.interests])].slice(0, 6);
   const chosen = slot || (slots[0] ? slotKey(slots[0]) : '');

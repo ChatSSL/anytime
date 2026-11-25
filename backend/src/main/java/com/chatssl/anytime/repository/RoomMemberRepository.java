@@ -1,5 +1,6 @@
 package com.chatssl.anytime.repository;
 
+import java.util.Collection;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -15,6 +16,9 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, RoomMemb
     List<RoomMember> findByRoomIdAndLeftAtIsNull(Long roomId);
 
     long countByRoomIdAndLeftAtIsNull(Long roomId);
+
+    /** 여러 방의 현재 참여자를 한 번에. getId().getRoomId()/getUserId()만 쓰면 방·사용자를 따로 읽지 않는다 */
+    List<RoomMember> findByRoomIdInAndLeftAtIsNull(Collection<Long> roomIds);
 
     List<RoomMember> findByUserIdAndLeftAtIsNull(Long userId);
 

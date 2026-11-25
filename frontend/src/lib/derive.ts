@@ -1,4 +1,4 @@
-import { AppState, Room, Slot, User } from '../types';
+import { AppState, PersonReco, Room, Slot, User } from '../types';
 import { AVATAR_COLORS, USERS } from '../data';
 import { abs, freeSlots, intersectAll, nextFreeSlot, overlap, slotKey } from './time';
 import { sharedConcepts, similarity } from './ai';
@@ -13,8 +13,9 @@ export function meUser(s: AppState): User {
   };
 }
 
+/** 'me', 시드 사용자('u1'), 서버 추천으로 받은 사용자(숫자 id '4') 순서로 찾는다 */
 export const userById = (s: AppState, id: string): User | undefined =>
-  id === ME_ID ? meUser(s) : USERS.find((u) => u.id === id);
+  id === ME_ID ? meUser(s) : USERS.find((u) => u.id === id) ?? s.serverPeople?.find((p) => p.user.id === id)?.user;
 
 export const nowMin = (s: AppState) => abs(s.clock.day, s.clock.min);
 
@@ -49,9 +50,14 @@ export function roomFit(r: Room, s: AppState): { pct: number; slot?: Slot } {
   return { pct: Math.round((best / dur) * 100), slot: bestSlot };
 }
 
-export interface PersonReco { user: User; slots: Slot[]; shared: string[]; score: number; reason: string }
+export type { PersonReco };
 
+/**
+ * 로그인했으면 서버가 계산한 목록(GET /recommend/people)을 쓴다. 아래 계산은 서버 RecommendService와 같은 식이고,
+ * 로그인 전 시연용으로 남겨 둔다. 차단은 아직 서버로 안 옮겨서(17단계) 여기서 한 번 더 거른다.
+ */
 export function recommendPeople(s: AppState): PersonReco[] {
+  if (s.serverPeople) return s.serverPeople.filter((p) => !s.blocks.includes(p.user.id));
   const mine = wantedSlots(s), my = meUser(s);
   const out: PersonReco[] = [];
   for (const u of USERS) {

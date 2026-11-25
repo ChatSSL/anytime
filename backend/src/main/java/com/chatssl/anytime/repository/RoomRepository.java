@@ -1,5 +1,6 @@
 package com.chatssl.anytime.repository;
 
+import java.time.LocalDate;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -14,6 +15,13 @@ public interface RoomRepository extends JpaRepository<Room, Long> {
     List<Room> findByStatusOrderByDayAscStartMinAsc(RoomStatus status);
 
     List<Room> findByDayAndStatus(Integer day, RoomStatus status);
+
+    /** from 날짜 이후(포함)에 모이는 방. 방장을 같이 읽는다 (모임 카드에 방장 닉네임) */
+    @Query("""
+        select r from Room r join fetch r.host
+        where r.status = :status and r.meetDate >= :from
+        """)
+    List<Room> findUpcoming(@Param("status") RoomStatus status, @Param("from") LocalDate from);
 
     /** 주어진 시간대와 겹치는 모임. (day, start_min) 인덱스를 탄다. */
     @Query("""
