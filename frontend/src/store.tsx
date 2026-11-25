@@ -6,6 +6,7 @@ import { hm } from './lib/time';
 import { ME_ID, roomChat, userById } from './lib/derive';
 import { setApiHandlers } from './api/client';
 import { authApi } from './api/auth';
+import { meApi, toProfile } from './api/me';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -55,7 +56,21 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
   return {
     finishOnboarding: () => update((d) => { d.onboarded = true; }),
     verify: (email: string, school: string) => update((d) => { d.verified = true; d.email = email; d.school = school; }),
-    setProfile: (p: Profile) => update((d) => { d.profile = p; }),
+    /** 로그인했으면 서버(PATCH /me)에 먼저 저장하고, 서버가 정리한 값으로 바꾼다. 실패하면 ApiError를 던진다 */
+    setProfile: async (p: Profile) => {
+      const saved = authApi.isLoggedIn() ? toProfile(await meApi.update(p)) : p;
+      update((d) => { d.profile = saved; });
+    },
+    /** GET /me. 서버에 프로필이 있으면(다른 기기에서 만들었거나 다시 로그인) 그걸로 채운다 */
+    loadMe: async () => {
+      if (!authApi.isLoggedIn()) return;
+      const me = await meApi.get({ quiet: true }).catch(() => null);
+      if (!me) return;
+      update((d) => {
+        d.school = me.school; d.email = me.email;
+        if (me.profileCompleted) d.profile = toProfile(me);
+      });
+    },
     addClass: (c: Omit<ClassBlock, 'id'>) => update((d) => { d.classes.push({ ...c, id: uid() }); }),
     removeClass: (id: string) => update((d) => { d.classes = d.classes.filter((c) => c.id !== id); }),
     loadExample: (classes: ClassBlock[]) => update((d) => { d.classes = classes; }),
@@ -235,6 +250,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       onLoggedOut: () => { update((d) => { d.verified = false; }); toast('로그인이 만료됐어요. 다시 인증해 주세요', 'info'); },
     });
   }, [toast, update]);
+  // 앱을 켤 때 서버의 내 프로필로 맞춘다 (연동 가이드 '프론트를 고치는 방식' 3번)
+  useEffect(() => { a.loadMe(); }, [a]);
   const value = useMemo(() => ({ s, update, toast, toasts, a }), [s, update, toast, toasts, a]);
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
 }

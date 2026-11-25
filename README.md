@@ -106,6 +106,19 @@ const me = await api.get<Me>('/me');                       // 실패하면 서�
 await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이 화면에서 직접 처리할 때
 ```
 
+## 프로필 (8단계)
+
+| API | 설명 |
+| --- | --- |
+| `GET /api/me` | 내 프로필. 이메일·비공개 관심사까지 본인에게만. `profileCompleted=false`면 아직 프로필 만들기 전(가입 직후 임시 닉네임 `새친구1234`) |
+| `PATCH /api/me` | 보낸 항목만 바꾼다. 닉네임 2~10자·띄어쓰기 불가, 겹치면 `409 USER_NICK_TAKEN`. `interests`는 1~8개 `[{"name": "코딩", "isPublic": true}]`, 보내면 목록 전체 교체. 학과를 비우면 학과 공개도 꺼진다 |
+| `GET /api/users/check-nick?nick=` | 중복 확인 버튼용 `{available, message}`. 내 닉네임은 `available=true` |
+| `GET /api/users/{id}` | 다른 사람에게 보이는 프로필: 닉네임, 공개한 학과·관심사, 매너 점수, 완료 모임 수. **이메일·시간표는 주지 않는다**. 차단 관계(어느 쪽이든)거나 영구 정지면 `404 USER_NOT_FOUND` |
+
+- 프론트: `src/api/me.ts`. 프로필 화면의 중복 확인과 저장이 서버를 거치고, 로그인 직후·앱 시작 때 `GET /me`로 프로필을 채운다
+- Windows Git Bash의 curl로 한글 JSON을 `-d '{...}'`로 보내면 인코딩이 깨져 400이 난다. Swagger를 쓰거나, UTF-8 파일로 저장해서 `--data-binary @body.json`으로 보낸다
+- `Person.tsx`(다른 사람 프로필 화면)는 아직 프론트 id(`u1`)를 쓰므로 그대로 두었다. 10단계 추천 API가 서버 id를 주면 `meApi.user(id)`로 바꾼다
+
 ## 브랜치와 PR 규칙
 
 - `main`에는 직접 push하지 않는다. PR로만 합친다
@@ -138,3 +151,4 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - [x] 5단계: 이메일 인증 (발송·확인 API, 이메일 HMAC 해시 + AES 암호화)
 - [x] 6단계: 서버 배포 ([docs/deploy.md](docs/deploy.md)). 배포는 Git Bash에서 `./deploy/deploy.sh`
 - [x] 7단계: JWT + Security, 프론트 `src/api/client.ts`와 인증 화면 연결
+- [x] 8단계: 프로필 API (`GET/PATCH /me`, `GET /users/:id`, 닉네임 중복 검사, 학과·관심사 공개 여부), 프로필 화면 연결

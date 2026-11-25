@@ -25,6 +25,7 @@ public enum ErrorCode {
     // 사용자
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "사용자를 찾을 수 없어요"),
     USER_SUSPENDED(HttpStatus.FORBIDDEN, "이용이 정지된 계정이에요"),
+    USER_NICK_TAKEN(HttpStatus.CONFLICT, "이미 쓰고 있는 닉네임이에요"),
 
     // 이메일 인증 (5단계)
     AUTH_EMAIL_DOMAIN(HttpStatus.BAD_REQUEST, "학교 이메일만 사용할 수 있어요"),
