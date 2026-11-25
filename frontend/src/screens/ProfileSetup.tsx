@@ -3,23 +3,47 @@ import { useNavigate } from 'react-router-dom';
 import { useApp } from '../store';
 import { ACTIVITIES, AVATAR_COLORS, USERS } from '../data';
 import { Avatar, Chip, Icon, Switch, TopBar } from '../components/ui';
+import { authApi } from '../api/auth';
+import { ApiError } from '../api/client';
+import { meApi } from '../api/me';
 
 export function ProfileSetup() {
   const nav = useNavigate(); const { a, s } = useApp();
   const p = s.profile;
   const [step, setStep] = useState(1);
-  const [nick, setNick] = useState(p?.nick ?? ''); const [checked, setChecked] = useState(false);
+  const [nick, setNick] = useState(p?.nick ?? '');
+  // 중복 확인 결과. null이면 아직 확인 안 함. 로그인했으면 서버(GET /users/check-nick)에 묻는다
+  const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(null);
+  const [checking, setChecking] = useState(false); const [saving, setSaving] = useState(false);
   const [avatar, setAvatar] = useState(p?.avatar ?? 0);
   const [dept, setDept] = useState(p?.dept ?? ''); const [showDept, setShowDept] = useState(p?.showDept ?? true);
   const [picked, setPicked] = useState<string[]>(p?.interests ?? []);
   const [custom, setCustom] = useState(''); const [customOpen, setCustomOpen] = useState(false);
-  const taken = USERS.some((u) => u.nick === nick.trim());
-  const lenOk = nick.trim().length >= 2 && nick.trim().length <= 10;
+  const taken = check?.ok === false;
+  const lenOk = nick.trim().length >= 2 && nick.trim().length <= 10 && !/\s/.test(nick.trim());
   const toggle = (x: string) => setPicked((v) => (v.includes(x) ? v.filter((y) => y !== x) : v.length < 8 ? [...v, x] : v));
   const addCustom = () => { const t = custom.trim(); if (t && picked.length < 8 && !picked.includes(t)) setPicked([...picked, t]); setCustom(''); };
-  const finish = () => {
-    a.setProfile({ nick: nick.trim(), dept: dept.trim(), showDept: showDept && !!dept.trim(), avatar, interests: picked });
-    nav(s.classes.length ? '/home' : '/timetable/setup', { replace: true });
+  const checkNick = async () => {
+    const n = nick.trim();
+    if (!authApi.isLoggedIn()) { // 서버 없이 시연할 때
+      const used = USERS.some((u) => u.nick === n);
+      setCheck({ ok: !used, text: used ? '이미 쓰고 있는 닉네임이에요.' : '쓸 수 있는 닉네임이에요.' });
+      return;
+    }
+    setChecking(true);
+    try { const r = await meApi.checkNick(n); setCheck({ ok: r.available, text: r.message }); }
+    catch (e) { setCheck({ ok: false, text: e instanceof ApiError ? e.message : '확인하지 못했어요' }); }
+    finally { setChecking(false); }
+  };
+  const finish = async () => {
+    setSaving(true);
+    try {
+      await a.setProfile({ nick: nick.trim(), dept: dept.trim(), showDept: showDept && !!dept.trim(), avatar, interests: picked });
+      nav(s.classes.length ? '/home' : '/timetable/setup', { replace: true });
+    } catch (e) {
+      // 확인한 뒤 다른 사람이 먼저 가져간 닉네임이면 1단계로 돌려보낸다 (에러 토스트는 client.ts가 띄운다)
+      if (e instanceof ApiError && e.code === 'USER_NICK_TAKEN') { setCheck({ ok: false, text: e.message }); setStep(1); }
+    } finally { setSaving(false); }
   };
   return (
     <div className="flowpage">
@@ -30,10 +54,10 @@ export function ProfileSetup() {
             <h1>나를 소개해요</h1>
             <div className="field"><label htmlFor="nick">닉네임</label>
               <div className="row">
-                <input id="nick" className={`input ${checked && lenOk && !taken ? 'ok' : checked && taken ? 'err' : ''}`} maxLength={10} placeholder="2~10자" value={nick} onChange={(e) => { setNick(e.target.value); setChecked(false); }} />
-                <button className="btn secondary m" disabled={!lenOk} onClick={() => setChecked(true)} style={{ flex: 'none' }}>중복 확인</button>
+                <input id="nick" className={`input ${check?.ok ? 'ok' : taken ? 'err' : ''}`} maxLength={10} placeholder="2~10자, 띄어쓰기 없이" value={nick} onChange={(e) => { setNick(e.target.value); setCheck(null); }} />
+                <button className="btn secondary m" disabled={!lenOk || checking} onClick={checkNick} style={{ flex: 'none' }}>{checking ? '확인 중…' : '중복 확인'}</button>
               </div>
-              {checked && (taken ? <span className="help err">이미 쓰고 있는 닉네임이에요.</span> : <span className="help ok">쓸 수 있는 닉네임이에요.</span>)}
+              {check && <span className={`help ${check.ok ? 'ok' : 'err'}`} role={check.ok ? undefined : 'alert'}>{check.text}</span>}
             </div>
             <div className="field"><span className="label">아바타</span>
               <div className="row wrap" role="radiogroup" aria-label="아바타 색">
@@ -68,7 +92,7 @@ export function ProfileSetup() {
             )}
             <p className="cap num" aria-live="polite">{picked.length}/8 선택</p>
           </div>
-          <div className="cta"><button className="btn block" disabled={picked.length === 0} onClick={finish}>다음: 시간표 입력</button></div>
+          <div className="cta"><button className="btn block" disabled={picked.length === 0 || saving} onClick={finish}>{saving ? '저장 중…' : '다음: 시간표 입력'}</button></div>
         </>
       )}
     </div>
