@@ -119,6 +119,21 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - Windows Git Bash의 curl로 한글 JSON을 `-d '{...}'`로 보내면 인코딩이 깨져 400이 난다. Swagger를 쓰거나, UTF-8 파일로 저장해서 `--data-binary @body.json`으로 보낸다
 - `Person.tsx`(다른 사람 프로필 화면)는 아직 프론트 id(`u1`)를 쓰므로 그대로 두었다. 10단계 추천 API가 서버 id를 주면 `meApi.user(id)`로 바꾼다
 
+## 시간표 (9단계)
+
+| API | 설명 |
+| --- | --- |
+| `GET /api/me/timetable` | 내 수업과 만나고 싶은 공강 `{classes: [{id, name, day, start, end}], wanted: [{day, start, end}]}`. 본인 것만 |
+| `PUT /api/me/classes` | `{"classes": [...]}`로 **전체 교체**(빈 목록이면 비우기). 수업끼리 겹치면 `400 TIMETABLE_CLASS_OVERLAP`. 새 수업과 겹치게 된 공강은 서버가 같이 지운다 |
+| `PUT /api/me/wanted` | `{"wanted": [...]}`로 **전체 교체**. 내 수업과 겹치면 `400 TIMETABLE_WANTED_NOT_FREE`, 공강끼리 겹치면 `400 INVALID_INPUT` |
+
+- 시간은 요일(0=월~4=금) + 하루 중 분(540 = 09:00). 끝나는 시각에 바로 시작하는 수업(09:00–10:30, 10:30–12:00)은 겹치지 않는다
+- 다른 사람의 시간표 원본은 어떤 API도 주지 않는다. 10단계 추천은 서버 안에서 `class_blocks`, `wanted_slots`를 읽어 겹치는 공강만 응답한다
+- 프론트: `src/api/timetable.ts`. 프론트는 공강마다 `wanted[key] = true/false`(기본 true)를 들고, 서버에는 켜진 공강만 보낸다
+- `store.tsx`의 `addClass`·`removeClass`·`loadExample`·`toggleWanted`는 화면에 바로 반영하고 서버 저장은 뒤에서 한다. 수업 수정(삭제+추가)은 한 번의 요청으로 모으고, 실패하면 서버에 저장된 상태로 되돌린다
+- 로그인할 때 서버 시간표가 비어 있고 이 기기에 시간표가 있으면(로그인 전에 만든 것) 서버로 올린다
+- 시드: 데모유저(id 1)의 공강 5칸을 `wanted_slots`에 넣었다
+
 ## 브랜치와 PR 규칙
 
 - `main`에는 직접 push하지 않는다. PR로만 합친다
@@ -152,3 +167,4 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - [x] 6단계: 서버 배포 ([docs/deploy.md](docs/deploy.md)). 배포는 Git Bash에서 `./deploy/deploy.sh`
 - [x] 7단계: JWT + Security, 프론트 `src/api/client.ts`와 인증 화면 연결
 - [x] 8단계: 프로필 API (`GET/PATCH /me`, `GET /users/:id`, 닉네임 중복 검사, 학과·관심사 공개 여부), 프로필 화면 연결
+- [x] 9단계: 시간표 API (`GET /me/timetable`, `PUT /me/classes`, `PUT /me/wanted`, 수업 시간 겹침 검사), 시간표 화면 연결

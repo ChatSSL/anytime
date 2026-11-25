@@ -41,6 +41,10 @@ public enum ErrorCode {
     AUTH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "로그인 정보가 올바르지 않아요"),
     AUTH_REFRESH_INVALID(HttpStatus.UNAUTHORIZED, "다시 로그인해 주세요"),
 
+    // 시간표 (9단계)
+    TIMETABLE_CLASS_OVERLAP(HttpStatus.BAD_REQUEST, "수업 시간이 겹쳐요"),
+    TIMETABLE_WANTED_NOT_FREE(HttpStatus.BAD_REQUEST, "수업이 있는 시간은 고를 수 없어요"),
+
     // 모임
     ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "모임을 찾을 수 없어요");
 
