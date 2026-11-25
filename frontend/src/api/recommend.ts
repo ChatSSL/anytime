@@ -1,0 +1,35 @@
+// 추천 (서버 10단계). derive.ts의 recommendPeople/recommendRooms를 서버가 계산한다.
+// 서버는 다른 사람의 시간표를 주지 않고 나와 겹치는 공강(slots)만 준다.
+import { api } from './client';
+import type { UserProfile } from './me';
+import type { Day, PersonReco, Slot, User } from '../types';
+import { AVATAR_COLORS } from '../data';
+
+interface ServerSlot { day: number; start: number; end: number }
+export interface ServerPersonReco { user: UserProfile; slots: ServerSlot[]; shared: string[]; score: number; reason: string }
+
+/** 11단계에서 모임이 서버로 옮겨지면 쓴다. 지금 프론트 모임은 아직 data.ts에 있어서 화면은 derive.ts를 쓴다 */
+export interface ServerRoomReco {
+  room: {
+    id: number; title: string; activity: string; day: number; start: number; end: number; meetDate: string;
+    place: string; cap: number; memberCount: number; hostId: number; hostNick: string; topic: string | null; official: boolean;
+  };
+  status: 'open' | 'soon'; fit: number; slot: ServerSlot | null;
+}
+
+const toSlot = (s: ServerSlot): Slot => ({ day: s.day as Day, start: s.start, end: s.end });
+
+/** 서버 공개 프로필 → 프론트 User. id는 서버 숫자 id를 문자열로. 시간표는 받지 않으므로 classes는 비어 있다 */
+export const toUser = (p: UserProfile): User => ({
+  id: String(p.id), nick: p.nick, dept: p.dept ?? undefined, color: AVATAR_COLORS[p.avatar] ?? AVATAR_COLORS[0],
+  interests: p.interests, manner: p.manner, meetups: p.completed, classes: [],
+});
+
+export const toPersonReco = (r: ServerPersonReco): PersonReco => ({
+  user: toUser(r.user), slots: r.slots.map(toSlot), shared: r.shared, score: r.score, reason: r.reason,
+});
+
+export const recommendApi = {
+  people: (opts?: { quiet?: boolean }) => api.get<ServerPersonReco[]>('/recommend/people', opts).then((l) => l.map(toPersonReco)),
+  rooms: (opts?: { quiet?: boolean }) => api.get<ServerRoomReco[]>('/recommend/rooms', opts),
+};

@@ -27,6 +27,9 @@ export interface Notif {
   link?: string; userId?: string; needsAction?: boolean; resolved?: 'accepted' | 'declined';
 }
 
+/** 사람 추천 한 줄. 로그인하면 서버(GET /recommend/people), 아니면 derive.ts가 만든다 */
+export interface PersonReco { user: User; slots: Slot[]; shared: string[]; score: number; reason: string }
+
 export interface Report { id: string; targetId: string; reason: string; detail: string; emergency: boolean; roomId?: string }
 export interface Profile { nick: string; dept: string; showDept: boolean; avatar: number; interests: string[] }
 
@@ -46,4 +49,6 @@ export interface AppState {
   settings: { notif: Record<string, boolean>; ads: boolean; quiet: boolean; premium: boolean };
   sentRequests: string[];
   sanction: 0 | 1 | 2 | 3;
+  /** 서버 사람 추천 (10단계). 있으면 derive.ts 계산 대신 이걸 쓴다. 로그인 전이면 undefined */
+  serverPeople?: PersonReco[];
 }

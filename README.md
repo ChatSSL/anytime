@@ -117,7 +117,7 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 
 - 프론트: `src/api/me.ts`. 프로필 화면의 중복 확인과 저장이 서버를 거치고, 로그인 직후·앱 시작 때 `GET /me`로 프로필을 채운다
 - Windows Git Bash의 curl로 한글 JSON을 `-d '{...}'`로 보내면 인코딩이 깨져 400이 난다. Swagger를 쓰거나, UTF-8 파일로 저장해서 `--data-binary @body.json`으로 보낸다
-- `Person.tsx`(다른 사람 프로필 화면)는 아직 프론트 id(`u1`)를 쓰므로 그대로 두었다. 10단계 추천 API가 서버 id를 주면 `meApi.user(id)`로 바꾼다
+- `Person.tsx`(다른 사람 프로필 화면)는 10단계에서 서버 id를 쓰도록 바꿨다 (아래 추천 참고)
 
 ## 시간표 (9단계)
 
@@ -132,7 +132,25 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - 프론트: `src/api/timetable.ts`. 프론트는 공강마다 `wanted[key] = true/false`(기본 true)를 들고, 서버에는 켜진 공강만 보낸다
 - `store.tsx`의 `addClass`·`removeClass`·`loadExample`·`toggleWanted`는 화면에 바로 반영하고 서버 저장은 뒤에서 한다. 수업 수정(삭제+추가)은 한 번의 요청으로 모으고, 실패하면 서버에 저장된 상태로 되돌린다
 - 로그인할 때 서버 시간표가 비어 있고 이 기기에 시간표가 있으면(로그인 전에 만든 것) 서버로 올린다
-- 시드: 데모유저(id 1)의 공강 5칸을 `wanted_slots`에 넣었다
+- 시드: 시드 사용자 모두의 수업 사이 공강을 `wanted_slots`에 넣었다 (10단계에서 데모유저 외 사용자 추가)
+
+## 추천 (10단계)
+
+| API | 설명 |
+| --- | --- |
+| `GET /api/recommend/people` | 나와 공강이 60분 이상 겹치는 사람, 점수 높은 순(최대 50명). `[{user, slots, shared, score, reason}]`. `user`는 `GET /users/{id}`와 같은 공개 프로필, `slots`는 **겹치는 구간만**(상대 시간표는 안 준다) |
+| `GET /api/recommend/rooms` | 지금 합류할 수 있는(`open`/`soon`) 모임 중 내가 안 들어간 것. `[{room, status, fit, slot}]`. 내 공강과 겹치는(`fit > 0`) 모임 먼저, 그 안에서는 빨리 시작하는 순 |
+
+- 계산은 프론트 `derive.ts`를 그대로 옮겼다 (`recommend/FreeTime.java` = `time.ts`, `recommend/InterestConcepts.java` = `ai.ts`, `RecommendService` = `recommendPeople`·`recommendRooms`·`roomFit`)
+  - 점수 = `0.55 × min(1, 겹친 분/180) + 0.45 × 관심사 유사도 + 매너/1000`. 관심사 유사도는 키워드를 개념으로 묶은 자카드 유사도
+- **나와 상대 모두 '만나고 싶은 공강'(`wanted_slots`)만 쓴다.** 상대가 끈 공강에는 추천되지 않는다. 프론트는 시드 사용자에게 이 값이 없어서 수업 사이 공강 전체를 썼는데, 시드에 전부 넣어 두었으므로 결과는 같다
+- 상대 관심사는 **공개한 것만** 점수와 `shared`에 쓴다. 일시 정지(`sanction >= 2`) 이상은 추천하지 않는다
+- **차단 제외**: `BlockRepository.findHiddenUserIds(userId)`가 차단 공통 메서드다(내가 차단 + 나를 차단, 양방향). 사람 추천에서는 그 사람을, 모임 추천에서는 그 사람이 방장인 모임을 뺀다. 17단계(차단 API)는 `blocks`에 넣기만 하면 추천에서 바로 빠진다
+- **derive.ts와 같은지 확인**: `RecommendServiceTest`가 시드와 같은 데이터로 사람 순서·점수(소수점 끝자리까지)·이유 문장, 모임 순서를 비교한다. 기대값은 `frontend/scripts/recommend-parity.ts`의 출력이다(실행법은 파일 맨 위). 실제 서버도 dev-login(1)로 `GET /api/recommend/people`을 부르면 같은 순서·점수가 나온다
+- **방 상태** `room/RoomPhase.java`: derive.ts `roomStatus()`를 옮긴 것. 프론트 시연 시계 대신 `meet_date + start_min`과 실제 지금 시각(한국 시간)으로 계산한다. **11단계 모임 목록·상세에서 그대로 쓰면 된다** (`RoomPhase.of(room, 참여 인원, LocalDateTime.now(clock))`)
+- **지금 시각**: `config/TimeConfig`의 `Clock` 빈(Asia/Seoul)을 주입받아 `LocalDateTime.now(clock)`을 쓴다. 서버 VM이 UTC여도 한국 시간으로 계산되고, 테스트에서는 `Clock.fixed(...)`로 시각을 고정할 수 있다. 18단계 크론도 이걸 쓰면 된다
+- 프론트: `src/api/recommend.ts`. 로그인하면 앱 시작·시간표 저장·프로필 저장 뒤에 `GET /recommend/people`을 받아 `serverPeople`에 두고, 홈·모임 화면의 사람 추천이 이걸 쓴다. `Person.tsx`는 서버 id(숫자)를 받으면 추천 목록의 겹치는 공강을 쓰고, 목록에 없으면 `GET /users/{id}`로 프로필만 받는다
+- 모임 추천 화면은 아직 프론트 `derive.ts`를 쓴다(모임이 아직 `data.ts`에 있어서 id가 서버와 다르다). **11단계에서 모임을 서버로 옮길 때** `recommendApi.rooms()`로 바꾸면 된다 (응답 타입 `ServerRoomReco`는 만들어 두었다)
 
 ## 브랜치와 PR 규칙
 
@@ -168,3 +186,4 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - [x] 7단계: JWT + Security, 프론트 `src/api/client.ts`와 인증 화면 연결
 - [x] 8단계: 프로필 API (`GET/PATCH /me`, `GET /users/:id`, 닉네임 중복 검사, 학과·관심사 공개 여부), 프로필 화면 연결
 - [x] 9단계: 시간표 API (`GET /me/timetable`, `PUT /me/classes`, `PUT /me/wanted`, 수업 시간 겹침 검사), 시간표 화면 연결
+- [x] 10단계: 추천 API (`GET /recommend/people`, `GET /recommend/rooms`, derive.ts 이식, 차단 양방향 제외), 홈 사람 추천·프로필 화면 연결

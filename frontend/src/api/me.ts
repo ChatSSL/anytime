@@ -33,6 +33,6 @@ export const meApi = {
 
   checkNick: (nick: string) => api.get<NickCheck>(`/users/check-nick?nick=${encodeURIComponent(nick)}`, { quiet: true }),
 
-  /** 다른 사람 프로필. 차단 관계면 404. 10단계에서 추천 목록이 서버 id를 주면 Person 화면에서 쓴다 */
+  /** 다른 사람 프로필. 차단 관계면 404. Person 화면이 추천 목록에 없는 서버 사용자를 열 때 쓴다 */
   user: (id: number) => api.get<UserProfile>(`/users/${id}`, { quiet: true }),
 };
