@@ -3,10 +3,11 @@ import { AppState, ClassBlock, Day, Msg, Profile, Room } from './types';
 import { initialState, SEED_VERSION, USERS } from './data';
 import { icebreaker } from './lib/ai';
 import { hm } from './lib/time';
-import { ME_ID, roomChat, userById } from './lib/derive';
+import { ME_ID, roomChat, userById, wantedSlots } from './lib/derive';
 import { setApiHandlers } from './api/client';
 import { authApi } from './api/auth';
 import { meApi, toProfile } from './api/me';
+import { fromServer, sameClasses, sameSlots, Timetable, timetableApi } from './api/timetable';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -53,6 +54,55 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
     return c;
   };
 
+  // ---- 시간표 서버 저장 (9단계) ----
+  // 수업 수정은 removeClass + addClass를 연달아 부르므로, 바로 보내지 않고 한 틱 모았다가 최종 상태만 보낸다.
+  // 요청은 한 번에 하나씩만 보내고, 보내는 동안 또 바뀌면 끝난 뒤 한 번 더 보낸다.
+  let synced: Timetable | null = null; // 서버에 마지막으로 저장된 상태
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let running = false, dirty = false;
+
+  const applyServer = (t: Timetable) => {
+    const { classes, wanted } = fromServer(t);
+    update((d) => { d.classes = classes; d.wanted = wanted; });
+  };
+
+  const flushTimetable = async () => {
+    if (running) { dirty = true; return; }
+    running = true;
+    try {
+      do {
+        dirty = false;
+        const s = getState();
+        if (!synced || !sameClasses(synced.classes.map((c) => ({ ...c, day: c.day as Day, name: c.name ?? '' })), s.classes)) {
+          synced = await timetableApi.putClasses(s.classes);
+        }
+        // 공강은 수업에 따라 바뀌므로 수업을 보낸 뒤 지금 켜져 있는 공강을 계산해서 보낸다
+        const wanted = wantedSlots(getState());
+        if (!sameSlots(wanted, synced.wanted)) synced = await timetableApi.putWanted(wanted);
+      } while (dirty);
+    } catch {
+      // 토스트는 client.ts가 띄운다. 화면은 서버에 저장된 마지막 상태로 되돌린다
+      if (synced) applyServer(synced);
+    } finally {
+      running = false;
+    }
+  };
+
+  const syncTimetable = () => {
+    if (!authApi.isLoggedIn()) return;
+    clearTimeout(timer);
+    timer = setTimeout(flushTimetable, 0);
+  };
+
+  /** 서버 시간표로 채운다. 서버가 비어 있고 이 기기에 시간표가 있으면(로그인 전에 만든 것) 서버로 올린다 */
+  const loadTimetable = async () => {
+    const t = await timetableApi.get({ quiet: true }).catch(() => null);
+    if (!t) return;
+    synced = t;
+    if (t.classes.length === 0 && getState().classes.length > 0) { syncTimetable(); return; }
+    applyServer(t);
+  };
+
   return {
     finishOnboarding: () => update((d) => { d.onboarded = true; }),
     verify: (email: string, school: string) => update((d) => { d.verified = true; d.email = email; d.school = school; }),
@@ -61,7 +111,7 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       const saved = authApi.isLoggedIn() ? toProfile(await meApi.update(p)) : p;
       update((d) => { d.profile = saved; });
     },
-    /** GET /me. 서버에 프로필이 있으면(다른 기기에서 만들었거나 다시 로그인) 그걸로 채운다 */
+    /** GET /me, GET /me/timetable. 서버에 프로필·시간표가 있으면(다른 기기에서 만들었거나 다시 로그인) 그걸로 채운다 */
     loadMe: async () => {
       if (!authApi.isLoggedIn()) return;
       const me = await meApi.get({ quiet: true }).catch(() => null);
@@ -70,11 +120,13 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         d.school = me.school; d.email = me.email;
         if (me.profileCompleted) d.profile = toProfile(me);
       });
+      await loadTimetable();
     },
-    addClass: (c: Omit<ClassBlock, 'id'>) => update((d) => { d.classes.push({ ...c, id: uid() }); }),
-    removeClass: (id: string) => update((d) => { d.classes = d.classes.filter((c) => c.id !== id); }),
-    loadExample: (classes: ClassBlock[]) => update((d) => { d.classes = classes; }),
-    toggleWanted: (key: string, v: boolean) => update((d) => { d.wanted[key] = v; }),
+    // 시간표는 화면에 바로 반영하고 서버 저장(PUT /me/classes, /me/wanted)은 뒤에서 한다. 실패하면 서버 상태로 되돌린다
+    addClass: (c: Omit<ClassBlock, 'id'>) => { update((d) => { d.classes.push({ ...c, id: uid() }); }); syncTimetable(); },
+    removeClass: (id: string) => { update((d) => { d.classes = d.classes.filter((c) => c.id !== id); }); syncTimetable(); },
+    loadExample: (classes: ClassBlock[]) => { update((d) => { d.classes = classes; }); syncTimetable(); },
+    toggleWanted: (key: string, v: boolean) => { update((d) => { d.wanted[key] = v; }); syncTimetable(); },
 
     join: (roomId: string) => {
       update((d) => {

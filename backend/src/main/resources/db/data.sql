@@ -111,6 +111,15 @@ INSERT INTO class_blocks (user_id, name, day, start_min, end_min) VALUES
 (9, NULL, 4, 540, 660),
 (9, NULL, 4, 810, 900);
 
+-- 만나고 싶은 공강 (9단계). 프론트는 공강을 기본으로 '만나고 싶어요'로 두므로, 데모유저의 공강 5칸을 전부 넣는다.
+-- 다른 시드 사용자는 추천에서 수업 사이 공강(freeSlots)을 쓰므로 넣지 않는다.
+INSERT INTO wanted_slots (user_id, day, start_min, end_min) VALUES
+(1, 0, 630, 780),
+(1, 1, 720, 900),
+(1, 2, 720, 840),
+(1, 3, 630, 780),
+(1, 4, 720, 840);
+
 -- 모임 (프론트 id -> DB id: r1=1, r2=2, r3=3, r4=4, r5=5, r6=6, r9=7, r11=8, r12=9, r7=10)
 INSERT INTO rooms (id, host_id, title, activity, day, start_min, end_min, meet_date, place, cap, topic, official, status) VALUES
 (1, 7, '점심 보드게임 같이 해요', '보드게임', 2, 720, 810, DATE_ADD(CURDATE(), INTERVAL MOD(2 - WEEKDAY(CURDATE()) + 7, 7) DAY), '학생회관 1층 라운지', 6, '카탄, 뱅 같은 가벼운 게임', FALSE, 'OPEN'),
