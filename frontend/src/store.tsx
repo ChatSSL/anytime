@@ -9,6 +9,7 @@ import { authApi } from './api/auth';
 import { meApi, toProfile } from './api/me';
 import { fromServer, sameClasses, sameSlots, Timetable, timetableApi } from './api/timetable';
 import { recommendApi } from './api/recommend';
+import { roomsApi, toRoom } from './api/rooms';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -67,12 +68,24 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
     update((d) => { d.classes = classes; d.wanted = wanted; });
   };
 
-  // ---- 추천 (10단계) ----
+  // ---- 추천 (10단계) & 모임 (11단계) ----
   // 추천은 내 공강·관심사로 계산하므로, 앱 시작·시간표 저장·프로필 저장 뒤에 다시 받는다. 실패하면 이전 목록을 그대로 둔다
   const loadRecommend = async () => {
     if (!authApi.isLoggedIn()) return;
-    const people = await recommendApi.people({ quiet: true }).catch(() => null);
-    if (people) update((d) => { d.serverPeople = people; });
+    const [people, roomRecos] = await Promise.all([
+      recommendApi.people({ quiet: true }).catch(() => null),
+      recommendApi.rooms({ quiet: true }).catch(() => null),
+    ]);
+    update((d) => {
+      if (people) d.serverPeople = people;
+      if (roomRecos) d.serverRoomRecos = roomRecos;
+    });
+  };
+
+  const loadRooms = async () => {
+    if (!authApi.isLoggedIn()) return;
+    const rooms = await roomsApi.list(undefined, { quiet: true }).catch(() => null);
+    if (rooms) update((d) => { d.serverRooms = rooms.map(toRoom); });
   };
 
   const flushTimetable = async () => {
@@ -90,7 +103,7 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         const wanted = wantedSlots(getState());
         if (!sameSlots(wanted, synced.wanted)) { synced = await timetableApi.putWanted(wanted); changed = true; }
       } while (dirty);
-      if (changed) loadRecommend();
+      if (changed) { loadRecommend(); loadRooms(); }
     } catch {
       // 토스트는 client.ts가 띄운다. 화면은 서버에 저장된 마지막 상태로 되돌린다
       if (synced) applyServer(synced);
@@ -133,9 +146,10 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         if (me.profileCompleted) d.profile = toProfile(me);
       });
       await loadTimetable();
-      await loadRecommend();
+      await Promise.all([loadRecommend(), loadRooms()]);
     },
     loadRecommend,
+    loadRooms,
     // 시간표는 화면에 바로 반영하고 서버 저장(PUT /me/classes, /me/wanted)은 뒤에서 한다. 실패하면 서버 상태로 되돌린다
     addClass: (c: Omit<ClassBlock, 'id'>) => { update((d) => { d.classes.push({ ...c, id: uid() }); }); syncTimetable(); },
     removeClass: (id: string) => { update((d) => { d.classes = d.classes.filter((c) => c.id !== id); }); syncTimetable(); },
@@ -162,7 +176,15 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       });
       toast('참여를 취소했어요', 'info');
     },
-    createRoom: (p: Pick<Room, 'title' | 'activity' | 'day' | 'start' | 'end' | 'place' | 'cap' | 'topic'>): string => {
+    createRoom: async (p: Pick<Room, 'title' | 'activity' | 'day' | 'start' | 'end' | 'place' | 'cap' | 'topic'>): Promise<string> => {
+      if (authApi.isLoggedIn()) {
+        const created = await roomsApi.create({
+          title: p.title, activity: p.activity, day: p.day, start: p.start, end: p.end,
+          place: p.place, cap: p.cap, topic: p.topic || undefined,
+        });
+        await Promise.all([loadRooms(), loadRecommend()]);
+        return String(created.id);
+      }
       const id = `r-${uid()}`;
       update((d) => {
         const r: Room = { ...p, id, members: [ME_ID], hostId: ME_ID };
@@ -313,7 +335,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setApiHandlers({
       onError: (message) => toast(message, 'err'),
-      onLoggedOut: () => { update((d) => { d.verified = false; d.serverPeople = undefined; }); toast('로그인이 만료됐어요. 다시 인증해 주세요', 'info'); },
+      onLoggedOut: () => { update((d) => { d.verified = false; d.serverPeople = undefined; d.serverRooms = undefined; d.serverRoomRecos = undefined; }); toast('로그인이 만료됐어요. 다시 인증해 주세요', 'info'); },
     });
   }, [toast, update]);
   // 앱을 켤 때 서버의 내 프로필로 맞춘다 (연동 가이드 '프론트를 고치는 방식' 3번)

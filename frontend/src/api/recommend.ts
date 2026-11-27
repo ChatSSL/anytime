@@ -2,13 +2,12 @@
 // 서버는 다른 사람의 시간표를 주지 않고 나와 겹치는 공강(slots)만 준다.
 import { api } from './client';
 import type { UserProfile } from './me';
-import type { Day, PersonReco, Slot, User } from '../types';
+import type { Day, PersonReco, RoomReco, Slot, User } from '../types';
 import { AVATAR_COLORS } from '../data';
 
 interface ServerSlot { day: number; start: number; end: number }
 export interface ServerPersonReco { user: UserProfile; slots: ServerSlot[]; shared: string[]; score: number; reason: string }
 
-/** 11단계에서 모임이 서버로 옮겨지면 쓴다. 지금 프론트 모임은 아직 data.ts에 있어서 화면은 derive.ts를 쓴다 */
 export interface ServerRoomReco {
   room: {
     id: number; title: string; activity: string; day: number; start: number; end: number; meetDate: string;
@@ -29,7 +28,33 @@ export const toPersonReco = (r: ServerPersonReco): PersonReco => ({
   user: toUser(r.user), slots: r.slots.map(toSlot), shared: r.shared, score: r.score, reason: r.reason,
 });
 
+export const toRoomReco = (r: ServerRoomReco): RoomReco => ({
+  room: {
+    id: String(r.room.id),
+    title: r.room.title,
+    activity: r.room.activity,
+    day: r.room.day as Day,
+    start: r.room.start,
+    end: r.room.end,
+    place: r.room.place,
+    cap: r.room.cap,
+    members: [],
+    hostId: String(r.room.hostId),
+    topic: r.room.topic ?? '',
+    official: r.room.official,
+    meetDate: r.room.meetDate,
+    memberCount: r.room.memberCount,
+    hostNick: r.room.hostNick,
+    status: r.status,
+    joined: false,
+    fitPct: r.fit,
+    fitSlot: r.slot ? toSlot(r.slot) : undefined,
+  },
+  status: r.status,
+  fit: r.fit,
+});
+
 export const recommendApi = {
   people: (opts?: { quiet?: boolean }) => api.get<ServerPersonReco[]>('/recommend/people', opts).then((l) => l.map(toPersonReco)),
-  rooms: (opts?: { quiet?: boolean }) => api.get<ServerRoomReco[]>('/recommend/rooms', opts),
+  rooms: (opts?: { quiet?: boolean }) => api.get<ServerRoomReco[]>('/recommend/rooms', opts).then((l) => l.map(toRoomReco)),
 };

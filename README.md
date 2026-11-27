@@ -152,6 +152,18 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - 프론트: `src/api/recommend.ts`. 로그인하면 앱 시작·시간표 저장·프로필 저장 뒤에 `GET /recommend/people`을 받아 `serverPeople`에 두고, 홈·모임 화면의 사람 추천이 이걸 쓴다. `Person.tsx`는 서버 id(숫자)를 받으면 추천 목록의 겹치는 공강을 쓰고, 목록에 없으면 `GET /users/{id}`로 프로필만 받는다
 - 모임 추천 화면은 아직 프론트 `derive.ts`를 쓴다(모임이 아직 `data.ts`에 있어서 id가 서버와 다르다). **11단계에서 모임을 서버로 옮길 때** `recommendApi.rooms()`로 바꾸면 된다 (응답 타입 `ServerRoomReco`는 만들어 두었다)
 
+## 모임 (11단계)
+
+| API | 설명 |
+| --- | --- |
+| `GET /api/rooms` | 열린 모임 목록. `day`, `activity`, `place`, `afterMin`, `minCap`, 공강 겹침(`fitOnly`), 내 모임(`mine`) 필터 지원. 차단 관계인 사람이 방장인 모임은 빠진다 |
+| `POST /api/rooms` | 모임 만들기. 정지(`sanction >= 2`) 계정은 `403 USER_SUSPENDED`. 모임(`Room`), 방장 `RoomMember`, 모임 채팅(`Chat.forRoom`), 방장 `ChatMember`, 첫 시스템 메시지를 한 트랜잭션으로 만든다 |
+| `GET /api/rooms/{id}` | 모임 상세. `isHost`, `chatId`, 참여자 공개 프로필(`UserProfileResponse`)을 내려준다. 차단 관계인 참여자는 목록에서 빼되 `memberCount`는 실제 인원수를 유지한다. 방이 없거나 비참여자에게 방장이 차단 관계면 `404 ROOM_NOT_FOUND` |
+
+- **방 날짜(`meetDate`)**: `Clock` 기준 오늘 이후(포함) 가장 가까운 `day` 요일로 넣는다. 오늘 요일인데 시작 시간이 이미 지났으면 다음 주 날짜로 잡는다
+- **방 상태**: `RoomPhase.of(room, memberCount, LocalDateTime.now(clock))`를 목록·상세 모두에서 계산해 내려준다
+- **프론트**: `src/api/rooms.ts` 추가. 로그인 상태면 모임 목록, 상세, 생성과 모임 추천(`recommendApi.rooms()`)이 서버를 탄다 (비로그인 시연용 로컬 fallback 유지). 합류·탈퇴(12단계)와 채팅(13·14단계)은 다음 단계에서 서버에 연결한다
+
 ## 브랜치와 PR 규칙
 
 - `main`에는 직접 push하지 않는다. PR로만 합친다
@@ -187,3 +199,4 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - [x] 8단계: 프로필 API (`GET/PATCH /me`, `GET /users/:id`, 닉네임 중복 검사, 학과·관심사 공개 여부), 프로필 화면 연결
 - [x] 9단계: 시간표 API (`GET /me/timetable`, `PUT /me/classes`, `PUT /me/wanted`, 수업 시간 겹침 검사), 시간표 화면 연결
 - [x] 10단계: 추천 API (`GET /recommend/people`, `GET /recommend/rooms`, derive.ts 이식, 차단 양방향 제외), 홈 사람 추천·프로필 화면 연결
+- [x] 11단계: 모임 CRUD API (`GET/POST /rooms`, `GET /rooms/:id`, 필터·동적 상태 계산·채팅방 동시 생성·차단 제외), 모임 목록·상세·생성·추천 화면 연결

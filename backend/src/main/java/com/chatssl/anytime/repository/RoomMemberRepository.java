@@ -3,6 +3,7 @@ package com.chatssl.anytime.repository;
 import java.util.Collection;
 import java.util.List;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -25,4 +26,12 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, RoomMemb
     @Query("select case when count(m) > 0 then true else false end from RoomMember m "
          + "where m.room.id = :roomId and m.user.id = :userId and m.leftAt is null")
     boolean isActiveMember(@Param("roomId") Long roomId, @Param("userId") Long userId);
+
+    @EntityGraph(attributePaths = {"user", "user.interests"})
+    @Query("""
+        select m from RoomMember m
+        where m.room.id = :roomId and m.leftAt is null
+        order by m.joinedAt asc, m.user.id asc
+        """)
+    List<RoomMember> findActiveWithUserByRoomId(@Param("roomId") Long roomId);
 }
