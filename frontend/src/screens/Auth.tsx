@@ -80,10 +80,14 @@ export function AuthCode() {
     if (left === 0) { setErr('인증번호가 만료됐어요. 다시 받아 주세요'); return; }
     setBusy(true);
     try {
-      await authApi.verify(st.email!, code); // 성공하면 토큰이 저장된다
+      const res = await authApi.verify(st.email!, code); // 성공하면 토큰이 저장된다
       a.verify(st.email!, st.school ?? '');
-      await a.loadMe(); // 예전에 만든 프로필이 서버에 있으면 프로필 화면에 미리 채워진다
-      nav('/auth/done');
+      const loaded = await a.loadMe(); // 예전에 만든 프로필·시간표가 서버에 있으면 불러온다
+      if (!res.newUser && loaded?.profileCompleted) {
+        nav(loaded.hasClasses ? '/home' : '/timetable/setup', { replace: true });
+      } else {
+        nav('/auth/done');
+      }
     } catch (e) { setErr(errText(e)); } finally { setBusy(false); }
   };
   const resend = async () => {

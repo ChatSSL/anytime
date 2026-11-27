@@ -46,7 +46,14 @@ public enum ErrorCode {
     TIMETABLE_WANTED_NOT_FREE(HttpStatus.BAD_REQUEST, "수업이 있는 시간은 고를 수 없어요"),
 
     // 모임
-    ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "모임을 찾을 수 없어요");
+    ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "모임을 찾을 수 없어요"),
+    ROOM_ALREADY_JOINED(HttpStatus.CONFLICT, "이미 참여 중인 모임이에요"),
+    ROOM_NOT_MEMBER(HttpStatus.BAD_REQUEST, "참여 중인 모임이 아니에요"),
+    ROOM_FULL(HttpStatus.CONFLICT, "정원이 가득 찬 모임이에요"),
+    ROOM_CLOSED(HttpStatus.CONFLICT, "모집이 마감된 모임이에요"),
+    ROOM_ENDED(HttpStatus.CONFLICT, "이미 끝난 모임이에요"),
+    ROOM_CANCELLED(HttpStatus.CONFLICT, "취소된 모임이에요"),
+    ROOM_HOST_TRANSFER_INVALID(HttpStatus.BAD_REQUEST, "방장을 넘길 수 없는 참여자예요");
 
     private final HttpStatus status;
     private final String message;
