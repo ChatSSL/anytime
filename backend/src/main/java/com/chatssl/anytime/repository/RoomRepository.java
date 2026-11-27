@@ -2,6 +2,7 @@ package com.chatssl.anytime.repository;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -32,4 +33,7 @@ public interface RoomRepository extends JpaRepository<Room, Long> {
         """)
     List<Room> findOverlapping(@Param("status") RoomStatus status, @Param("day") int day,
                                @Param("startMin") int startMin, @Param("endMin") int endMin);
+
+    @Query("select r from Room r join fetch r.host where r.id = :id")
+    Optional<Room> findWithHostById(@Param("id") Long id);
 }

@@ -1,26 +1,33 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useApp } from '../store';
-import { ACTIVITIES, PLACES } from '../data';
+import { ACTIVITIES, AVATAR_COLORS, PLACES } from '../data';
 import { DAYS, Day } from '../types';
 import { abs, dur, freeSlots, hm, classConflict, slotKey, slotLabel } from '../lib/time';
-import { ME_ID, joinable, pendingChange, recommendPeople, recommendRooms, roomChat, roomFit, roomStatus, userById, wantedSlots } from '../lib/derive';
-import { Avatar, Chip, Empty, FreeBadge, Icon, Modal, RoomCard, Sheet, StatusPill, TopBar } from '../components/ui';
+import { ME_ID, joinable, pendingChange, recommendPeople, recommendRooms, roomChat, roomFit, roomStatus, userById } from '../lib/derive';
+import { Avatar, Chip, Empty, Icon, Modal, RoomCard, Sheet, Skeleton, StatusPill, TopBar } from '../components/ui';
 import { SafetyMenu, SosButton } from '../components/safety';
 import { ChatPanel } from './Chat';
+import { roomsApi, ServerRoomDetail, toRoom } from '../api/rooms';
+import { toUser } from '../api/recommend';
+
+const isServerId = (id?: string) => !!id && /^\d+$/.test(id);
 
 /* ------------------------------------------------------------------ 목록 */
 export function Rooms() {
-  const { s } = useApp(); const nav = useNavigate();
+  const { s, a } = useApp(); const nav = useNavigate();
   const [day, setDay] = useState<number>(s.clock.day);
   const [fitOnly, setFitOnly] = useState(true);
   const [acts, setActs] = useState<string[]>([]); const [places, setPlaces] = useState<string[]>([]);
   const [afterMin, setAfterMin] = useState(540); const [minCap, setMinCap] = useState(2);
   const [open, setOpen] = useState(false);
 
-  const all = s.rooms.filter((r) => !s.blocks.includes(r.hostId));
+  useEffect(() => { a.loadRooms(); }, [a]);
+
+  const source = s.serverRooms ?? s.rooms;
+  const all = source.filter((r) => !s.blocks.includes(r.hostId));
   const filtered = all.filter((r) =>
-    r.day === day && (!fitOnly || roomFit(r, s).pct > 0 || r.members.includes(ME_ID)) &&
+    r.day === day && (!fitOnly || roomFit(r, s).pct > 0 || (r.joined ?? r.members.includes(ME_ID))) &&
     (!acts.length || acts.includes(r.activity)) && (!places.length || places.includes(r.place)) &&
     r.start >= afterMin && r.cap >= minCap,
   ).sort((a, b) => a.start - b.start);
@@ -61,17 +68,38 @@ export function Rooms() {
 export function RoomDetail() {
   const { id } = useParams(); const nav = useNavigate();
   const { s, a, toast } = useApp();
-  const room = s.rooms.find((r) => r.id === id);
+  const serverMode = isServerId(id);
+  const [remote, setRemote] = useState<ServerRoomDetail | null | undefined>(undefined);
+  useEffect(() => {
+    if (!serverMode) return;
+    setRemote(undefined);
+    roomsApi.get(Number(id), { quiet: true }).then(setRemote).catch(() => setRemote(null));
+  }, [id, serverMode]);
+
   const [cancel, setCancel] = useState(false); const [reason, setReason] = useState(''); const [menu, setMenu] = useState(false); const [joined, setJoined] = useState(false);
+
+  if (serverMode && remote === undefined) {
+    return <div className="page"><TopBar title="모임 상세" /><div className="card col"><Skeleton h={120} /><Skeleton h={24} w="60%" /><Skeleton h={16} /></div></div>;
+  }
+
+  const room = serverMode ? (remote ? toRoom(remote) : undefined) : s.rooms.find((r) => r.id === id);
   if (!room) return <div className="page"><TopBar title="모임" /><Empty title="모임을 찾을 수 없어요" action={<button className="btn m" onClick={() => nav('/rooms')}>목록으로</button>} /></div>;
 
-  const st = roomStatus(room, s), host = userById(s, room.hostId);
-  const member = room.members.includes(ME_ID), isHost = room.hostId === ME_ID;
+  const st = remote ? remote.status : roomStatus(room, s);
+  const memberUsers = remote ? remote.members.map(toUser) : room.members.map((m) => userById(s, m)!).filter(Boolean);
+  const host = remote
+    ? (memberUsers.find((u) => u.id === String(remote.hostId)) ?? {
+      id: String(remote.hostId), nick: remote.hostNick, color: AVATAR_COLORS[0], interests: [], manner: 36.5, meetups: 0, classes: [],
+    })
+    : userById(s, room.hostId);
+  const member = remote ? remote.joined : room.members.includes(ME_ID);
+  const isHost = remote ? remote.isHost : room.hostId === ME_ID;
+  const memberCount = remote ? remote.memberCount : room.members.length;
   const fit = roomFit(room, s), conflict = classConflict(s.classes, room.day, room.start, room.end);
   const chat = roomChat(s, room.id), change = pendingChange(s, room.id);
   const startAbs = abs(room.day, room.start), nowAbs = abs(s.clock.day, s.clock.min);
   const similar = recommendRooms(s).filter((x) => x.room.id !== room.id).slice(0, 2);
-  const others = room.members.filter((m) => m !== ME_ID).map((m) => userById(s, m)!).filter(Boolean);
+  const others = remote ? memberUsers.filter((u) => !remote.isHost || u.id !== String(remote.hostId)) : memberUsers.filter((u) => u.id !== ME_ID);
   const unavailable = !member && !joinable(st);
   const close1h = startAbs - nowAbs <= 60;
 
@@ -102,7 +130,7 @@ export function RoomDetail() {
       {!member && joinable(st) && conflict && <div className="notice danger"><Icon n="info" s={18} />{conflict.name} 수업과 시간이 겹쳐요.</div>}
 
       <div className="card col list" style={{ gap: 0, padding: '4px 16px' }}>
-        {[['clock', `${DAYS[room.day]} ${hm(room.start)}–${hm(room.end)}`], ['pin', room.place], ['users', `${room.members.length}/${room.cap}명 · 2명부터 열려요`], ['spark', room.topic]].map(([ic, t]) => (
+        {[['clock', `${DAYS[room.day]} ${hm(room.start)}–${hm(room.end)}`], ['pin', room.place], ['users', `${memberCount}/${room.cap}명 · 2명부터 열려요`], ...(room.topic ? [['spark', room.topic]] : [])].map(([ic, t]) => (
           <div key={t} className="listrow" style={{ padding: '12px 0' }}><Icon n={ic} s={20} /><span className="num grow">{t}</span></div>
         ))}
         <div className="listrow" style={{ padding: '12px 0' }}>{host && <Avatar user={host} size="sm" />}<span className="grow">{room.official ? '운영팀이 먼저 열어 둔 모임' : `방장 ${host?.nick ?? ''}`}</span></div>
@@ -110,9 +138,9 @@ export function RoomDetail() {
 
       <div className="col" style={{ gap: 8 }}>
         <span className="label">참여자</span>
-        <div className="avatars" aria-label={`참여자 ${room.members.length}명`}>
-          {room.members.map((m) => <Avatar key={m} user={userById(s, m)} />)}
-          {Array.from({ length: Math.max(0, Math.min(room.cap - room.members.length, 4)) }).map((_, i) => <span key={i} className="avatar empty" aria-hidden="true">+</span>)}
+        <div className="avatars" aria-label={`참여자 ${memberCount}명`}>
+          {memberUsers.map((u) => <Avatar key={u.id} user={u} />)}
+          {Array.from({ length: Math.max(0, Math.min(room.cap - memberCount, 4)) }).map((_, i) => <span key={i} className="avatar empty" aria-hidden="true">+</span>)}
         </div>
       </div>
 
@@ -135,7 +163,7 @@ export function RoomDetail() {
         {!member && joinable(st) && <button className="btn" onClick={() => { a.join(room.id); setJoined(true); }}>합류하기</button>}
         {unavailable && <><button className="btn" disabled>{st === 'cancelled' ? '취소된 모임이에요' : st === 'ended' ? '끝난 모임이에요' : '마감됐어요'}</button><button className="btn secondary" onClick={() => nav('/rooms')}>비슷한 모임 보기</button></>}
         {member && st !== 'ended' && st !== 'cancelled' && (<>
-          <button className="btn" onClick={() => nav(`/chat/chat-${room.id}`)}>채팅방 가기</button>
+          <button className="btn" onClick={() => nav(remote?.chatId ? `/chat/${remote.chatId}` : `/chat/chat-${room.id}`)}>채팅방 가기</button>
           <button className="btn secondary" onClick={() => setCancel(true)}>참여 취소</button></>)}
         {member && st === 'ended' && !s.rated.includes(room.id) && <button className="btn" onClick={() => nav(`/review/${room.id}`)}>모임 평가하기</button>}
       </div>
@@ -149,7 +177,7 @@ export function RoomDetail() {
     <div className="page">
       <TopBar title="모임 상세" right={<>
         <button className="iconbtn" aria-label="링크 복사" onClick={() => { navigator.clipboard?.writeText(location.href).then(() => toast('링크를 복사했어요', 'info')).catch(() => toast('링크를 복사하지 못했어요. 주소창의 주소를 직접 복사해 주세요', 'err')); }}><Icon n="share" /></button>
-        {host && host.id !== ME_ID && host.id !== 'staff' && <button className="iconbtn" aria-label="신고 · 차단" onClick={() => setMenu(true)}><Icon n="flag" /></button>}
+        {host && host.id !== ME_ID && host.id !== 'staff' && !isHost && <button className="iconbtn" aria-label="신고 · 차단" onClick={() => setMenu(true)}><Icon n="flag" /></button>}
       </>} />
       <div className="splitroom">
         {info}
@@ -182,6 +210,7 @@ export function RoomCreate() {
   const [mDay, setMDay] = useState<Day>(s.clock.day); const [mStart, setMStart] = useState(720); const [mEnd, setMEnd] = useState(810);
   const [place, setPlace] = useState(PLACES[0]); const [cap, setCap] = useState(4); const [topic, setTopic] = useState('');
   const [doneId, setDoneId] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const sel = free.find((f) => slotKey(f) === slotK);
   const t = sel ? { day: sel.day, start: sel.start, end: Math.min(sel.end, sel.start + 90) } : { day: mDay, start: mStart, end: mEnd };
@@ -201,11 +230,23 @@ export function RoomCreate() {
         <p className="cap">시작 30분 전에 자동으로 모집이 마감돼요.</p>
         <div className="row" style={{ width: '100%' }}>
           <button className="btn secondary grow" onClick={() => navigator.clipboard?.writeText(`${location.origin}${location.pathname}#/rooms/${doneId}`).catch(() => {})}>공유하기</button>
-          <button className="btn grow" onClick={() => nav(`/chat/chat-${doneId}`, { replace: true })}>채팅방으로</button>
+          <button className="btn grow" onClick={() => nav(isServerId(doneId) ? `/rooms/${doneId}` : `/chat/chat-${doneId}`, { replace: true })}>{isServerId(doneId) ? '모임 보러 가기' : '채팅방으로'}</button>
         </div>
       </div>
     );
   }
+  const submit = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const id = await a.createRoom({ title: finalTitle, activity, ...t, place, cap, topic: topic.trim() || `${activity} 같이 해요` });
+      if (id) setDoneId(id);
+    } catch {
+      // 에러 토스트는 client.ts가 표시한다
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className="page narrow">
       <TopBar title="모임 만들기" />
@@ -229,7 +270,7 @@ export function RoomCreate() {
           <div className="row"><button className="iconbtn" aria-label="줄이기" disabled={cap <= 2} onClick={() => setCap(cap - 1)}>−</button><b className="num" style={{ minWidth: 40, textAlign: 'center', fontSize: 20 }}>{cap}</b><button className="iconbtn" aria-label="늘리기" disabled={cap >= 8} onClick={() => setCap(cap + 1)}>+</button></div></div>
         <div className="field"><label htmlFor="tp">주제 · 소개</label><textarea id="tp" className="input" rows={3} maxLength={100} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="예: 카탄, 뱅 같은 가벼운 게임" /><span className="help num">{topic.length}/100</span></div>
         <div className="card flat col" style={{ gap: 4 }}><span className="over">요약</span><h3>{finalTitle}</h3><p className="cap num">{DAYS[t.day]} {hm(t.start)}–{hm(t.end)} · {place} · {cap}명</p></div>
-        <button className="btn block" disabled={bad || !!conflict} onClick={() => setDoneId(a.createRoom({ title: finalTitle, activity, ...t, place, cap, topic: topic.trim() || `${activity} 같이 해요` }))}>방 열기</button>
+        <button className="btn block" disabled={bad || !!conflict || saving} onClick={submit}>{saving ? '여는 중...' : '방 열기'}</button>
       </div>
     </div>
   );

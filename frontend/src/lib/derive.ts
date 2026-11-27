@@ -1,4 +1,4 @@
-import { AppState, PersonReco, Room, Slot, User } from '../types';
+import { AppState, PersonReco, Room, RoomReco, RoomStatus, Slot, User } from '../types';
 import { AVATAR_COLORS, USERS } from '../data';
 import { abs, freeSlots, intersectAll, nextFreeSlot, overlap, slotKey } from './time';
 import { sharedConcepts, similarity } from './ai';
@@ -22,14 +22,16 @@ export const nowMin = (s: AppState) => abs(s.clock.day, s.clock.min);
 /** 내 공강 중 "만나고 싶어요"가 켜진 것만. 기본값은 켜짐. */
 export const wantedSlots = (s: AppState): Slot[] => freeSlots(s.classes).filter((x) => s.wanted[slotKey(x)] !== false);
 
-export type RoomStatus = 'open' | 'soon' | 'closed' | 'full' | 'ended' | 'cancelled';
+export type { RoomStatus };
 
 /** 모집 마감: 시작 30분 전. 인원 미달: 시작 시점에 2명 미만이면 자동 취소(운영팀 모임 제외). */
 export function roomStatus(r: Room, s: AppState): RoomStatus {
+  if (r.status) return r.status;
   const now = nowMin(s), start = abs(r.day, r.start), end = abs(r.day, r.end);
-  if (!r.official && r.members.length < 2 && now >= start) return 'cancelled';
+  const count = r.memberCount ?? r.members.length;
+  if (!r.official && count < 2 && now >= start) return 'cancelled';
   if (now >= end) return 'ended';
-  if (r.members.length >= r.cap) return 'full';
+  if (count >= r.cap) return 'full';
   if (now >= start - 30) return 'closed';
   if (now >= start - 60) return 'soon';
   return 'open';
@@ -41,6 +43,7 @@ export const STATUS_LABEL: Record<RoomStatus, string> = {
 export const joinable = (st: RoomStatus) => st === 'open' || st === 'soon';
 
 export function roomFit(r: Room, s: AppState): { pct: number; slot?: Slot } {
+  if (r.fitPct !== undefined) return { pct: r.fitPct, slot: r.fitSlot };
   const dur = r.end - r.start;
   let best = 0, bestSlot: Slot | undefined;
   for (const f of wantedSlots(s)) {
@@ -77,7 +80,8 @@ export function recommendPeople(s: AppState): PersonReco[] {
 
 const fmt = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
-export function recommendRooms(s: AppState): { room: Room; status: RoomStatus; fit: number }[] {
+export function recommendRooms(s: AppState): RoomReco[] {
+  if (s.serverRoomRecos) return s.serverRoomRecos.filter((x) => !s.blocks.includes(x.room.hostId));
   return s.rooms
     .filter((r) => !s.blocks.includes(r.hostId))
     .map((r) => ({ room: r, status: roomStatus(r, s), fit: roomFit(r, s).pct }))
