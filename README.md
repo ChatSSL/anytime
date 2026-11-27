@@ -164,6 +164,19 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - **방 상태**: `RoomPhase.of(room, memberCount, LocalDateTime.now(clock))`를 목록·상세 모두에서 계산해 내려준다
 - **프론트**: `src/api/rooms.ts` 추가. 로그인 상태면 모임 목록, 상세, 생성과 모임 추천(`recommendApi.rooms()`)이 서버를 탄다 (비로그인 시연용 로컬 fallback 유지). 합류·탈퇴(12단계)와 채팅(13·14단계)은 다음 단계에서 서버에 연결한다
 
+## 모임 합류·탈퇴·방장 관리 및 공통 알림 (12단계)
+
+| API | 설명 |
+| --- | --- |
+| `POST /api/rooms/{id}/join` | 모임 합류. `Room` 행에 비관적 잠금(`PESSIMISTIC_WRITE`)을 걸어 동시 정원 초과를 막고, 이전에 나갔던 참여자는 기존 `room_members` 행의 `left_at`을 비워 재활성화한다. `chat_members` 등록·입장 시스템 메시지·방장 `JOIN` 알림까지 한 트랜잭션으로 처리한다 |
+| `POST /api/rooms/{id}/leave` | 모임 참여 취소. 시작 60분 이내에 `"그냥 못 가요"` 사유로 취소하면 매너 점수 `0.5` 차감(최저 `30.0`) 및 `cancel_log(penalty=0.5)`를 기록하고, 그 외 사유나 60분 초과 전 취소는 `penalty=0.0`으로 기록만 남긴다. 방장이 나가면 가장 먼저 합류한 활성 참여자에게 방장을 자동 위임하고, 남은 인원이 없으면 `CANCELED`로 바꾼다 |
+| `POST /api/rooms/{id}/cancel` | 방장 모임 취소. 방장 권한(`FORBIDDEN`)을 검사한 뒤 상태를 `CANCELED`로 바꾸고 시스템 메시지 기록 및 남은 참여자에게 `CANCEL` 알림을 보낸다(매너 차감 없음) |
+| `POST /api/rooms/{id}/host` | 방장 위임(`{"userId": ...}`). 활성 참여자이면서 제재(`sanction >= 2`)가 없는 대상에게 방장을 넘기고 시스템 메시지 및 `CHANGE` 알림을 보낸다 |
+
+- **동적 상태 및 에러 코드**: `join`은 `RoomPhase.joinable()`(`open`/`soon`)일 때만 허용하며 상태에 따라 `ROOM_FULL`, `ROOM_CLOSED`, `ROOM_ENDED`, `ROOM_CANCELLED`, `ROOM_ALREADY_JOINED`를 내려준다. 차단 관계인 방장의 모임은 `404 ROOM_NOT_FOUND`, 차단 관계인 일반 참여자가 있는 모임은 `403 FORBIDDEN`으로 막는다
+- **공통 알림 메서드 (`NotificationService.notify`)**: 알림 저장과 `users.settings.notif.<type>` 수신 여부 확인을 한곳에서 처리한다(`settings`나 해당 알림 키가 없으면 기본값 `true`로 발송). 이후 13단계 1:1 요청·18단계 크론 알림도 이 메서드를 쓴다
+- **프론트**: `src/api/rooms.ts`에 `join`·`leave`·`cancel`·`transferHost`를 추가하고, `store.tsx`와 `Rooms.tsx`(`RoomDetail`)에서 로그인 시 서버 API를 호출하도록 연결했다 (비로그인 시연용 로컬 fallback 유지)
+
 ## 브랜치와 PR 규칙
 
 - `main`에는 직접 push하지 않는다. PR로만 합친다
@@ -200,3 +213,4 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - [x] 9단계: 시간표 API (`GET /me/timetable`, `PUT /me/classes`, `PUT /me/wanted`, 수업 시간 겹침 검사), 시간표 화면 연결
 - [x] 10단계: 추천 API (`GET /recommend/people`, `GET /recommend/rooms`, derive.ts 이식, 차단 양방향 제외), 홈 사람 추천·프로필 화면 연결
 - [x] 11단계: 모임 CRUD API (`GET/POST /rooms`, `GET /rooms/:id`, 필터·동적 상태 계산·채팅방 동시 생성·차단 제외), 모임 목록·상세·생성·추천 화면 연결
+- [x] 12단계: 공통 알림 메서드(`NotificationService.notify`) 및 모임 합류·탈퇴·방장 관리 API (`POST /rooms/:id/join`, `/leave`, `/cancel`, `/host`, 동시성 제어·1시간 전 취소 패널티·방장 자동 위임), 모임 상세 화면 연결

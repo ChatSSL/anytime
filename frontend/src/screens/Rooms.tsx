@@ -4,10 +4,11 @@ import { useApp } from '../store';
 import { ACTIVITIES, AVATAR_COLORS, PLACES } from '../data';
 import { DAYS, Day } from '../types';
 import { abs, dur, freeSlots, hm, classConflict, slotKey, slotLabel } from '../lib/time';
-import { ME_ID, joinable, pendingChange, recommendPeople, recommendRooms, roomChat, roomFit, roomStatus, userById } from '../lib/derive';
+import { ME_ID, joinable, myRooms, pendingChange, recommendPeople, recommendRooms, roomChat, roomFit, roomStatus, userById } from '../lib/derive';
 import { Avatar, Chip, Empty, Icon, Modal, RoomCard, Sheet, Skeleton, StatusPill, TopBar } from '../components/ui';
 import { SafetyMenu, SosButton } from '../components/safety';
 import { ChatPanel } from './Chat';
+import { authApi } from '../api/auth';
 import { roomsApi, ServerRoomDetail, toRoom } from '../api/rooms';
 import { toUser } from '../api/recommend';
 
@@ -77,6 +78,10 @@ export function RoomDetail() {
   }, [id, serverMode]);
 
   const [cancel, setCancel] = useState(false); const [reason, setReason] = useState(''); const [menu, setMenu] = useState(false); const [joined, setJoined] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [cancelRoomOpen, setCancelRoomOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [nextHostId, setNextHostId] = useState('');
 
   if (serverMode && remote === undefined) {
     return <div className="page"><TopBar title="모임 상세" /><div className="card col"><Skeleton h={120} /><Skeleton h={24} w="60%" /><Skeleton h={16} /></div></div>;
@@ -100,13 +105,82 @@ export function RoomDetail() {
   const startAbs = abs(room.day, room.start), nowAbs = abs(s.clock.day, s.clock.min);
   const similar = recommendRooms(s).filter((x) => x.room.id !== room.id).slice(0, 2);
   const others = remote ? memberUsers.filter((u) => !remote.isHost || u.id !== String(remote.hostId)) : memberUsers.filter((u) => u.id !== ME_ID);
+  const transferCandidates = memberUsers.filter((u) => u.id !== String(room.hostId));
   const unavailable = !member && !joinable(st);
-  const close1h = startAbs - nowAbs <= 60;
+  const serverStartMs = remote ? new Date(`${remote.meetDate}T00:00:00+09:00`).getTime() + remote.start * 60_000 : 0;
+  const serverDiffMs = remote ? serverStartMs - Date.now() : 0;
+  const close1h = remote ? (serverDiffMs > 0 && serverDiffMs <= 60 * 60_000) : (startAbs - nowAbs <= 60);
+  const remainMin = remote ? Math.max(0, Math.ceil(serverDiffMs / 60_000)) : (startAbs - nowAbs);
 
-  const doLeave = () => {
-    const r = reason || '단순 취소';
-    a.leave(room.id, r, close1h && r === '그냥 못 가요');
-    setCancel(false); setReason('');
+  const doJoin = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const updated = await a.join(room.id);
+      if (updated) {
+        setRemote(updated);
+        if (updated.joined) setJoined(true);
+      } else if (serverMode) {
+        const latest = await roomsApi.get(Number(id), { quiet: true }).catch(() => null);
+        if (latest) {
+          setRemote(latest);
+          if (latest.joined) setJoined(true);
+        }
+      } else {
+        setJoined(true);
+      }
+    } catch {
+      // 에러 토스트는 client.ts가 표시한다
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doLeave = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = reason || '단순 취소';
+      const updated = await a.leave(room.id, r, close1h && r === '그냥 못 가요');
+      if (updated) setRemote(updated);
+      else if (serverMode) setRemote(await roomsApi.get(Number(id), { quiet: true }).catch(() => remote));
+      setJoined(false);
+      setCancel(false); setReason('');
+    } catch {
+      // 에러 토스트는 client.ts가 표시한다
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doCancelRoom = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const updated = await a.cancelRoom(room.id);
+      if (updated) setRemote(updated);
+      else if (serverMode) setRemote(await roomsApi.get(Number(id), { quiet: true }).catch(() => remote));
+      setCancelRoomOpen(false);
+    } catch {
+      // 에러 토스트는 client.ts가 표시한다
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doTransferHost = async () => {
+    if (busy || !nextHostId) return;
+    setBusy(true);
+    try {
+      const updated = await a.transferHost(room.id, nextHostId);
+      if (updated) setRemote(updated);
+      else if (serverMode) setRemote(await roomsApi.get(Number(id), { quiet: true }).catch(() => remote));
+      setTransferOpen(false); setNextHostId('');
+    } catch {
+      // 에러 토스트는 client.ts가 표시한다
+    } finally {
+      setBusy(false);
+    }
   };
   const REASONS = ['휴강 또는 수업 연장', '갑작스러운 일정', '몸이 안 좋아요', '그냥 못 가요'];
 
@@ -117,10 +191,10 @@ export function RoomDetail() {
         <h1 style={{ fontSize: 24 }}>{room.title}</h1>
       </div>
 
-      {st === 'cancelled' && <div className="notice danger"><Icon n="info" s={18} /><span><b>모임이 자동 취소됐어요 (참여자 2명 미만)</b><br />비슷한 모임을 아래에서 골라보세요.</span></div>}
+      {st === 'cancelled' && <div className="notice danger"><Icon n="info" s={18} /><span><b>취소된 모임이에요</b><br />비슷한 모임을 아래에서 골라보세요.</span></div>}
       {st === 'closed' && !member && <div className="notice warn"><Icon n="clock" s={18} />모집이 마감됐어요. 시작 30분 전에 자동으로 닫혀요.</div>}
       {member && st === 'closed' && <div className="notice"><Icon n="bell" s={18} />모집이 마감됐어요. 곧 시작해요!</div>}
-      {member && (st === 'soon' || st === 'closed') && startAbs - nowAbs > 0 && <div className="notice"><Icon n="bell" s={18} />리마인드: {dur(startAbs - nowAbs)} 뒤 시작해요.</div>}
+      {member && (st === 'soon' || st === 'closed') && remainMin > 0 && <div className="notice"><Icon n="bell" s={18} />리마인드: {dur(remainMin)} 뒤 시작해요.</div>}
       {change && member && (
         <div className="notice warn col" style={{ gap: 8 }}><span><b>일정이 바뀌었어요</b> · {change.body}</span>
           <div className="row"><button className="btn s" onClick={() => a.resolveChange(room.id, true)}>그래도 참여할게요</button><button className="btn secondary s" onClick={() => a.resolveChange(room.id, false)}>이번엔 빠질게요</button></div></div>
@@ -160,14 +234,22 @@ export function RoomDetail() {
       )}
 
       <div className="cta">
-        {!member && joinable(st) && <button className="btn" onClick={() => { a.join(room.id); setJoined(true); }}>합류하기</button>}
+        {!member && joinable(st) && <button className="btn" disabled={busy} onClick={doJoin}>{busy ? '합류 중...' : '합류하기'}</button>}
         {unavailable && <><button className="btn" disabled>{st === 'cancelled' ? '취소된 모임이에요' : st === 'ended' ? '끝난 모임이에요' : '마감됐어요'}</button><button className="btn secondary" onClick={() => nav('/rooms')}>비슷한 모임 보기</button></>}
         {member && st !== 'ended' && st !== 'cancelled' && (<>
           <button className="btn" onClick={() => nav(remote?.chatId ? `/chat/${remote.chatId}` : `/chat/chat-${room.id}`)}>채팅방 가기</button>
-          <button className="btn secondary" onClick={() => setCancel(true)}>참여 취소</button></>)}
+          <button className="btn secondary" disabled={busy} onClick={() => setCancel(true)}>참여 취소</button></>)}
         {member && st === 'ended' && !s.rated.includes(room.id) && <button className="btn" onClick={() => nav(`/review/${room.id}`)}>모임 평가하기</button>}
       </div>
-      {member && !isHost && st !== 'ended' && st !== 'cancelled' && (
+      {isHost && st !== 'ended' && st !== 'cancelled' && (
+        <div className="row wrap">
+          {transferCandidates.length > 0 && (
+            <button className="btn secondary s" disabled={busy} onClick={() => { setNextHostId(transferCandidates[0].id); setTransferOpen(true); }}>방장 위임</button>
+          )}
+          <button className="btn ghost s" style={{ color: 'var(--danger)' }} disabled={busy} onClick={() => setCancelRoomOpen(true)}>모임 취소</button>
+        </div>
+      )}
+      {!remote && member && !isHost && st !== 'ended' && st !== 'cancelled' && (
         <button className="btn ghost s" style={{ alignSelf: 'flex-start' }} onClick={() => a.simulateHostChange(room.id)}>시연: 방장이 시간을 30분 늦춰요</button>
       )}
     </div>
@@ -185,7 +267,7 @@ export function RoomDetail() {
       </div>
 
       <Modal open={cancel && !close1h} onClose={() => setCancel(false)} title="참여를 취소할까요?"
-        actions={<><button className="btn danger block" onClick={doLeave}>취소하기</button><button className="btn ghost block" onClick={() => setCancel(false)}>유지하기</button></>}>
+        actions={<><button className="btn danger block" disabled={busy} onClick={doLeave}>{busy ? '취소 중...' : '취소하기'}</button><button className="btn ghost block" onClick={() => setCancel(false)}>유지하기</button></>}>
         <p className="cap">시작 1시간 전까지는 자유롭게 취소할 수 있어요.</p>
       </Modal>
       <Sheet open={cancel && close1h} onClose={() => setCancel(false)} title="취소 사유를 골라주세요">
@@ -193,7 +275,23 @@ export function RoomDetail() {
           {REASONS.map((r) => <label key={r} className="check" style={{ padding: '8px 0' }}><input type="radio" name="reason" checked={reason === r} onChange={() => setReason(r)} />{r}</label>)}
         </div>
         <div className="notice">휴강·수업 연장 같은 불가피한 사유는 기록만 남고 점수에는 영향이 없어요. 연락 없이 불참하면 매너 점수가 내려가요.</div>
-        <button className="btn danger block" disabled={!reason} onClick={doLeave}>참여 취소</button>
+        <button className="btn danger block" disabled={!reason || busy} onClick={doLeave}>{busy ? '취소 중...' : '참여 취소'}</button>
+      </Sheet>
+      <Modal open={cancelRoomOpen} onClose={() => setCancelRoomOpen(false)} title="모임을 취소할까요?"
+        actions={<><button className="btn danger block" disabled={busy} onClick={doCancelRoom}>{busy ? '취소 중...' : '모임 취소하기'}</button><button className="btn ghost block" onClick={() => setCancelRoomOpen(false)}>돌아가기</button></>}>
+        <p className="cap">취소하면 참여 중인 다른 멤버들에게 알림이 가고 다시 열 수 없어요.</p>
+      </Modal>
+      <Sheet open={transferOpen} onClose={() => setTransferOpen(false)} title="방장 위임">
+        <div className="col" style={{ gap: 4 }} role="radiogroup" aria-label="새 방장 선택">
+          {transferCandidates.map((u) => (
+            <label key={u.id} className="check" style={{ padding: '8px 0' }}>
+              <input type="radio" name="nextHost" checked={nextHostId === u.id} onChange={() => setNextHostId(u.id)} />
+              <Avatar user={u} size="sm" />
+              <span>{u.nick}</span>
+            </label>
+          ))}
+        </div>
+        <button className="btn block" disabled={!nextHostId || busy} onClick={doTransferHost}>{busy ? '위임 중...' : '방장 넘기기'}</button>
       </Sheet>
       <SafetyMenu open={menu} onClose={() => setMenu(false)} target={host} roomId={room.id} />
       {member && <SosButton candidates={others.filter((u) => u.id !== 'staff')} roomId={room.id} />}
@@ -204,6 +302,9 @@ export function RoomDetail() {
 /* ------------------------------------------------------------------ 생성 */
 export function RoomCreate() {
   const { s, a } = useApp(); const nav = useNavigate();
+  useEffect(() => {
+    if (authApi.isLoggedIn()) a.loadRooms();
+  }, [a]);
   const free = freeSlots(s.classes);
   const [activity, setActivity] = useState('보드게임'); const [title, setTitle] = useState('');
   const [slotK, setSlotK] = useState<string>(free[0] ? slotKey(free[0]) : 'manual');
@@ -215,6 +316,10 @@ export function RoomCreate() {
   const sel = free.find((f) => slotKey(f) === slotK);
   const t = sel ? { day: sel.day, start: sel.start, end: Math.min(sel.end, sel.start + 90) } : { day: mDay, start: mStart, end: mEnd };
   const conflict = classConflict(s.classes, t.day, t.start, t.end);
+  const roomConflict = myRooms(s).find((r) => {
+    const st = roomStatus(r, s);
+    return st !== 'ended' && st !== 'cancelled' && r.day === t.day && r.start < t.end && t.start < r.end;
+  });
   const bad = t.end <= t.start;
   const finalTitle = title.trim() || `${activity} 같이 해요`;
   const notified = recommendPeople(s).filter((p) => p.slots.some((x) => x.day === t.day && x.start < t.end && t.start < x.end)).length;
@@ -263,6 +368,7 @@ export function RoomCreate() {
             </div>)}
           {bad && <span className="help err">종료 시간이 시작보다 늦어야 해요.</span>}
           {conflict && !bad && <span className="help err">수업과 겹쳐요 · {conflict.name}</span>}
+          {roomConflict && !bad && <span className="help err">이미 참여 중인 모임({roomConflict.title})과 시간이 겹쳐요</span>}
         </div>
         <div className="field"><span className="label">장소</span><div className="chips">{PLACES.map((p) => <Chip key={p} on={place === p} onClick={() => setPlace(p)}>{p}</Chip>)}</div>
           <span className="help">첫 만남은 교내 공개 장소를 추천해요.</span></div>
@@ -270,7 +376,7 @@ export function RoomCreate() {
           <div className="row"><button className="iconbtn" aria-label="줄이기" disabled={cap <= 2} onClick={() => setCap(cap - 1)}>−</button><b className="num" style={{ minWidth: 40, textAlign: 'center', fontSize: 20 }}>{cap}</b><button className="iconbtn" aria-label="늘리기" disabled={cap >= 8} onClick={() => setCap(cap + 1)}>+</button></div></div>
         <div className="field"><label htmlFor="tp">주제 · 소개</label><textarea id="tp" className="input" rows={3} maxLength={100} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="예: 카탄, 뱅 같은 가벼운 게임" /><span className="help num">{topic.length}/100</span></div>
         <div className="card flat col" style={{ gap: 4 }}><span className="over">요약</span><h3>{finalTitle}</h3><p className="cap num">{DAYS[t.day]} {hm(t.start)}–{hm(t.end)} · {place} · {cap}명</p></div>
-        <button className="btn block" disabled={bad || !!conflict || saving} onClick={submit}>{saving ? '여는 중...' : '방 열기'}</button>
+        <button className="btn block" disabled={bad || !!conflict || !!roomConflict || saving} onClick={submit}>{saving ? '여는 중...' : '방 열기'}</button>
       </div>
     </div>
   );

@@ -1,5 +1,6 @@
 package com.chatssl.anytime.repository;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 
@@ -10,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 
 import com.chatssl.anytime.domain.RoomMember;
 import com.chatssl.anytime.domain.RoomMemberId;
+import com.chatssl.anytime.domain.RoomStatus;
 
 public interface RoomMemberRepository extends JpaRepository<RoomMember, RoomMemberId> {
 
@@ -34,4 +36,21 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, RoomMemb
         order by m.joinedAt asc, m.user.id asc
         """)
     List<RoomMember> findActiveWithUserByRoomId(@Param("roomId") Long roomId);
+
+    @Query("""
+        select m from RoomMember m join fetch m.room r
+        where m.user.id = :userId
+          and m.leftAt is null
+          and r.status = :status
+          and r.meetDate = :meetDate
+          and r.startMin < :endMin
+          and r.endMin > :startMin
+        """)
+    List<RoomMember> findActiveOverlapping(
+        @Param("userId") Long userId,
+        @Param("status") RoomStatus status,
+        @Param("meetDate") LocalDate meetDate,
+        @Param("startMin") int startMin,
+        @Param("endMin") int endMin
+    );
 }

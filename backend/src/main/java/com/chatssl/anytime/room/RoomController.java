@@ -14,15 +14,17 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.chatssl.anytime.common.CurrentUserId;
 import com.chatssl.anytime.room.dto.CreateRoomRequest;
+import com.chatssl.anytime.room.dto.LeaveRoomRequest;
 import com.chatssl.anytime.room.dto.RoomDetailResponse;
 import com.chatssl.anytime.room.dto.RoomResponse;
+import com.chatssl.anytime.room.dto.TransferHostRequest;
 
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 
-@Tag(name = "모임", description = "모임 목록·상세·생성 및 동적 상태 (11단계)")
+@Tag(name = "모임", description = "모임 목록·상세·생성·참여·방장 기능 (11~12단계)")
 @RestController
 @RequestMapping("/api/rooms")
 @RequiredArgsConstructor
@@ -61,5 +63,41 @@ public class RoomController {
     @GetMapping("/{id}")
     public RoomDetailResponse detail(@CurrentUserId Long userId, @PathVariable Long id) {
         return roomService.detail(userId, id);
+    }
+
+    @Operation(summary = "모임 합류",
+        description = "정원과 상태(open/soon), 차단 관계를 확인하고 모임과 모임방 채팅에 합류한다.")
+    @PostMapping("/{id}/join")
+    public RoomDetailResponse join(@CurrentUserId Long userId, @PathVariable Long id) {
+        return roomService.join(userId, id);
+    }
+
+    @Operation(summary = "모임 참여 취소",
+        description = "모임에서 나가며 시작 1시간 이내 단순 변심 취소 시 매너 점수 0.5가 차감된다. 방장이 나가면 다음 참여자에게 방장이 위임된다.")
+    @PostMapping("/{id}/leave")
+    public RoomDetailResponse leave(
+        @CurrentUserId Long userId,
+        @PathVariable Long id,
+        @RequestBody(required = false) @Valid LeaveRoomRequest request
+    ) {
+        return roomService.leave(userId, id, request);
+    }
+
+    @Operation(summary = "방장 모임 취소",
+        description = "방장이 모임을 취소하고 남은 참여자들에게 취소 알림을 보낸다.")
+    @PostMapping("/{id}/cancel")
+    public RoomDetailResponse cancel(@CurrentUserId Long userId, @PathVariable Long id) {
+        return roomService.cancel(userId, id);
+    }
+
+    @Operation(summary = "방장 위임",
+        description = "방장이 현재 참여 중인 다른 사용자에게 방장 권한을 넘긴다.")
+    @PostMapping("/{id}/host")
+    public RoomDetailResponse transferHost(
+        @CurrentUserId Long userId,
+        @PathVariable Long id,
+        @Valid @RequestBody TransferHostRequest request
+    ) {
+        return roomService.transferHost(userId, id, request.userId());
     }
 }

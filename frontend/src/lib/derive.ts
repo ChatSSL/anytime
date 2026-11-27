@@ -94,7 +94,8 @@ export const inClass = (s: AppState) =>
 
 export const nextFree = (s: AppState) => nextFreeSlot(wantedSlots(s), s.clock);
 
-export const myRooms = (s: AppState) => s.rooms.filter((r) => r.members.includes(ME_ID));
+export const myRooms = (s: AppState) =>
+  s.serverRooms ? s.serverRooms.filter((r) => r.joined) : s.rooms.filter((r) => r.members.includes(ME_ID));
 export const roomChat = (s: AppState, roomId: string) => s.chats.find((c) => c.roomId === roomId);
 export const dmChat = (s: AppState, userId: string) => s.chats.find((c) => c.kind === 'dm' && c.userId === userId);
 

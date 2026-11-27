@@ -4,15 +4,16 @@ import { initialState, SEED_VERSION, USERS } from './data';
 import { icebreaker } from './lib/ai';
 import { hm } from './lib/time';
 import { ME_ID, roomChat, userById, wantedSlots } from './lib/derive';
-import { setApiHandlers } from './api/client';
+import { ApiError, setApiHandlers, tokens } from './api/client';
 import { authApi } from './api/auth';
 import { meApi, toProfile } from './api/me';
 import { fromServer, sameClasses, sameSlots, Timetable, timetableApi } from './api/timetable';
 import { recommendApi } from './api/recommend';
-import { roomsApi, toRoom } from './api/rooms';
+import { roomsApi, ServerRoomDetail, toRoom } from './api/rooms';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
+const isServerRoomId = (id: string) => /^\d+$/.test(id);
 
 function load(): AppState {
   try {
@@ -119,12 +120,16 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
   };
 
   /** 서버 시간표로 채운다. 서버가 비어 있고 이 기기에 시간표가 있으면(로그인 전에 만든 것) 서버로 올린다 */
-  const loadTimetable = async () => {
+  const loadTimetable = async (): Promise<boolean> => {
     const t = await timetableApi.get({ quiet: true }).catch(() => null);
-    if (!t) return;
+    if (!t) return getState().classes.length > 0;
     synced = t;
-    if (t.classes.length === 0 && getState().classes.length > 0) { syncTimetable(); return; }
+    if (t.classes.length === 0 && getState().classes.length > 0) {
+      syncTimetable();
+      return true;
+    }
     applyServer(t);
+    return t.classes.length > 0;
   };
 
   return {
@@ -137,16 +142,33 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       loadRecommend(); // 관심사가 바뀌면 추천 점수도 바뀐다
     },
     /** GET /me, GET /me/timetable. 서버에 프로필·시간표가 있으면(다른 기기에서 만들었거나 다시 로그인) 그걸로 채운다 */
-    loadMe: async () => {
-      if (!authApi.isLoggedIn()) return;
-      const me = await meApi.get({ quiet: true }).catch(() => null);
-      if (!me) return;
+    loadMe: async (): Promise<{ profileCompleted: boolean; hasClasses: boolean } | null> => {
+      if (!authApi.isLoggedIn()) return null;
+      let me;
+      try {
+        me = await meApi.get({ quiet: true });
+      } catch (e) {
+        if (e instanceof ApiError && (e.status === 404 || e.code === 'USER_NOT_FOUND')) {
+          tokens.clear();
+          update((d) => {
+            d.verified = false;
+            d.profile = null;
+            d.serverPeople = undefined;
+            d.serverRooms = undefined;
+            d.serverRoomRecos = undefined;
+          });
+          toast('계정 정보가 초기화되어 다시 로그인이 필요해요', 'info');
+        }
+        return null;
+      }
       update((d) => {
         d.school = me.school; d.email = me.email;
-        if (me.profileCompleted) d.profile = toProfile(me);
+        d.manner = me.manner; d.completed = me.completed; d.sanction = me.sanction;
+        d.profile = me.profileCompleted ? toProfile(me) : null;
       });
-      await loadTimetable();
+      const hasClasses = await loadTimetable();
       await Promise.all([loadRecommend(), loadRooms()]);
+      return { profileCompleted: me.profileCompleted, hasClasses };
     },
     loadRecommend,
     loadRooms,
@@ -156,7 +178,13 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
     loadExample: (classes: ClassBlock[]) => { update((d) => { d.classes = classes; }); syncTimetable(); },
     toggleWanted: (key: string, v: boolean) => { update((d) => { d.wanted[key] = v; }); syncTimetable(); },
 
-    join: (roomId: string) => {
+    join: async (roomId: string): Promise<ServerRoomDetail | undefined> => {
+      if (authApi.isLoggedIn() && isServerRoomId(roomId)) {
+        const detail = await roomsApi.join(Number(roomId));
+        await Promise.all([loadRooms(), loadRecommend()]);
+        toast('합류했어요. 내 시간표에 일정이 등록됐어요', 'ok');
+        return detail;
+      }
       update((d) => {
         const r = d.rooms.find((x) => x.id === roomId); if (!r || r.members.includes(ME_ID)) return;
         r.members.push(ME_ID);
@@ -164,8 +192,22 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         c.messages.push({ id: uid(), from: 'sys', text: `${d.profile?.nick ?? '나'}님이 합류했어요`, time: clockStr(d) });
       });
       toast('합류했어요. 내 시간표에 일정이 등록됐어요', 'ok');
+      return undefined;
     },
-    leave: (roomId: string, reason: string, penalty: boolean) => {
+    leave: async (roomId: string, reason: string, penalty: boolean): Promise<ServerRoomDetail | undefined> => {
+      if (authApi.isLoggedIn() && isServerRoomId(roomId)) {
+        const detail = await roomsApi.leave(Number(roomId), reason);
+        const [me] = await Promise.all([
+          meApi.get({ quiet: true }).catch(() => null),
+          loadRooms(),
+          loadRecommend(),
+        ]);
+        if (me) {
+          update((d) => { d.manner = me.manner; d.completed = me.completed; d.sanction = me.sanction; });
+        }
+        toast('참여를 취소했어요', 'info');
+        return detail;
+      }
       update((d) => {
         const r = d.rooms.find((x) => x.id === roomId); if (!r) return;
         r.members = r.members.filter((m) => m !== ME_ID);
@@ -175,6 +217,40 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         if (c) c.messages.push({ id: uid(), from: 'sys', text: `${d.profile?.nick ?? '나'}님이 참여를 취소했어요`, time: clockStr(d) });
       });
       toast('참여를 취소했어요', 'info');
+      return undefined;
+    },
+    cancelRoom: async (roomId: string): Promise<ServerRoomDetail | undefined> => {
+      if (authApi.isLoggedIn() && isServerRoomId(roomId)) {
+        const detail = await roomsApi.cancel(Number(roomId));
+        await Promise.all([loadRooms(), loadRecommend()]);
+        toast('모임을 취소했어요', 'info');
+        return detail;
+      }
+      update((d) => {
+        const r = d.rooms.find((x) => x.id === roomId); if (!r) return;
+        r.status = 'cancelled';
+        const c = roomChat(d, roomId);
+        if (c) c.messages.push({ id: uid(), from: 'sys', text: `${d.profile?.nick ?? '방장'}님이 모임을 취소했어요`, time: clockStr(d) });
+      });
+      toast('모임을 취소했어요', 'info');
+      return undefined;
+    },
+    transferHost: async (roomId: string, userId: string): Promise<ServerRoomDetail | undefined> => {
+      if (authApi.isLoggedIn() && isServerRoomId(roomId) && isServerRoomId(userId)) {
+        const detail = await roomsApi.transferHost(Number(roomId), Number(userId));
+        await Promise.all([loadRooms(), loadRecommend()]);
+        toast('방장을 넘겼어요', 'ok');
+        return detail;
+      }
+      update((d) => {
+        const r = d.rooms.find((x) => x.id === roomId); if (!r) return;
+        r.hostId = userId;
+        const targetNick = userById(d, userId)?.nick ?? '새 방장';
+        const c = roomChat(d, roomId);
+        if (c) c.messages.push({ id: uid(), from: 'sys', text: `${targetNick}님이 새 방장이 되었어요`, time: clockStr(d) });
+      });
+      toast('방장을 넘겼어요', 'ok');
+      return undefined;
     },
     createRoom: async (p: Pick<Room, 'title' | 'activity' | 'day' | 'start' | 'end' | 'place' | 'cap' | 'topic'>): Promise<string> => {
       if (authApi.isLoggedIn()) {

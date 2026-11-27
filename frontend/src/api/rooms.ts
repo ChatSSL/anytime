@@ -1,4 +1,4 @@
-// 모임 (서버 11단계). 목록·상세·생성을 서버로 연결한다.
+// 모임 (서버 11~12단계). 목록·상세·생성·합류·탈퇴·방장 기능을 서버로 연결한다.
 import { api } from './client';
 import type { UserProfile } from './me';
 import type { Day, Room, Slot } from '../types';
@@ -104,4 +104,12 @@ export const roomsApi = {
     api.get<ServerRoomDetail>(`/rooms/${id}`, opts),
   create: (body: CreateRoomBody) =>
     api.post<ServerRoomDetail>('/rooms', body),
+  join: (id: number) =>
+    api.post<ServerRoomDetail>(`/rooms/${id}/join`),
+  leave: (id: number, reason?: string) =>
+    api.post<ServerRoomDetail>(`/rooms/${id}/leave`, reason ? { reason } : {}),
+  cancel: (id: number) =>
+    api.post<ServerRoomDetail>(`/rooms/${id}/cancel`),
+  transferHost: (id: number, userId: number) =>
+    api.post<ServerRoomDetail>(`/rooms/${id}/host`, { userId }),
 };
