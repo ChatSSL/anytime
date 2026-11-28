@@ -14,6 +14,7 @@ import { chatsApi, dmRequestsApi, ServerDmRequest } from './api/chats';
 import { chatStomp, StompChatMessage } from './api/stomp';
 import { CreateReportBody, notificationsApi, safetyApi, toNotif } from './api/safety';
 import { reviewApi, ServerReviewResult, SubmitReviewBody } from './api/review';
+import { changesApi, ProposeChangeBody, ServerChange } from './api/changes';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -315,6 +316,22 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       });
       toast('방장을 넘겼어요', 'ok');
       return undefined;
+    },
+    /** 일정 변경 제안 (15단계, 방장·서버 모임). 실패하면 client.ts가 토스트를 띄우고 null */
+    proposeChange: async (roomId: string, body: ProposeChangeBody): Promise<ServerChange | null> => {
+      let res: ServerChange;
+      try { res = await changesApi.propose(Number(roomId), body); } catch { return null; }
+      await Promise.all([loadRooms(), loadChats()]);
+      toast(res.status === 'APPLIED' ? '일정을 바꿨어요' : '참여자에게 일정 변경을 물어봤어요', 'ok');
+      return res;
+    },
+    /** 일정 변경에 답하기 (15단계). accept=false면 모임에서 나간다 */
+    voteChange: async (changeId: number, accept: boolean): Promise<ServerChange | null> => {
+      let res: ServerChange;
+      try { res = await changesApi.vote(changeId, accept); } catch { return null; }
+      await Promise.all([loadRooms(), loadChats(), loadNotifs(), ...(accept ? [] : [loadRecommend()])]);
+      toast(accept ? (res.status === 'APPLIED' ? '모두 답해서 일정이 확정됐어요' : '참여를 유지했어요') : '이번엔 빠졌어요', 'info');
+      return res;
     },
     createRoom: async (p: Pick<Room, 'title' | 'activity' | 'day' | 'start' | 'end' | 'place' | 'cap' | 'topic'>): Promise<string> => {
       if (authApi.isLoggedIn()) {
