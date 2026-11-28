@@ -11,6 +11,7 @@ import { fromServer, sameClasses, sameSlots, Timetable, timetableApi } from './a
 import { recommendApi } from './api/recommend';
 import { roomsApi, ServerRoomDetail, toRoom } from './api/rooms';
 import { chatsApi, dmRequestsApi, ServerDmRequest } from './api/chats';
+import { chatStomp, StompChatMessage } from './api/stomp';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -163,10 +164,12 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         me = await meApi.get({ quiet: true });
       } catch (e) {
         if (e instanceof ApiError && (e.status === 404 || e.code === 'USER_NOT_FOUND')) {
+          chatStomp.disconnect();
           tokens.clear();
           update((d) => {
             d.verified = false;
             d.profile = null;
+            d.myUserId = undefined;
             d.serverPeople = undefined;
             d.serverRooms = undefined;
             d.serverRoomRecos = undefined;
@@ -178,6 +181,7 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         return null;
       }
       update((d) => {
+        d.myUserId = me.id;
         d.school = me.school; d.email = me.email;
         d.manner = me.manner; d.completed = me.completed; d.sanction = me.sanction;
         d.profile = me.profileCompleted ? toProfile(me) : null;
@@ -386,15 +390,14 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
     send: (chatId: string, text: string) => {
       const t = text.trim(); if (!t) return;
       if (authApi.isLoggedIn() && isServerId(chatId)) {
-        // TODO(Step 14): STOMP WebSocket(/app/chats/{id}/send)으로 실시간 메시지 송신 교체 예정
-        toast('실시간 메시지 전송은 14단계(WebSocket)에서 연결돼요', 'info');
+        chatStomp.publishMessage(Number(chatId), t);
         return;
       }
       update((d) => {
         const c = d.chats.find((x) => x.id === chatId); if (!c) return;
         c.messages.push({ id: uid(), from: ME_ID, text: t, time: clockStr(d) });
       });
-      // 시연용: 상대가 잠깐 뒤에 답한다.
+      // 시연용(로그인 전): 상대가 잠깐 뒤에 답한다.
       setTimeout(() => update((d) => {
         const c = d.chats.find((x) => x.id === chatId); if (!c) return;
         let from: string | undefined = c.userId;
@@ -406,6 +409,28 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         const replies = ['좋아요!', '네 그때 봬요 :)', '저도 그 시간 괜찮아요', '도착하면 말해줄게요'];
         c.messages.push({ id: uid(), from, text: replies[c.messages.length % replies.length], time: clockStr(d) });
       }), 1400);
+    },
+    applyIncomingMessage: (msg: StompChatMessage, viewing: boolean) => {
+      update((d) => {
+        if (!d.serverChats) return;
+        const idx = d.serverChats.findIndex((c) => c.id === msg.chatId);
+        if (idx < 0) return;
+        const c = d.serverChats[idx];
+        const isMine = msg.senderId !== null && d.myUserId !== undefined && msg.senderId === d.myUserId;
+        const isDuplicate = c.lastMessage?.id === msg.id;
+        c.lastMessage = { ...msg, mine: isMine };
+        if (msg.createdAt) c.lastActivityAt = msg.createdAt;
+        if (viewing || isMine) {
+          c.unreadCount = 0;
+        } else if (!isDuplicate) {
+          c.unreadCount += 1;
+        }
+        d.serverChats.sort((x, y) => {
+          const tx = x.lastActivityAt ?? '';
+          const ty = y.lastActivityAt ?? '';
+          return ty.localeCompare(tx) || y.id - x.id;
+        });
+      });
     },
     setMission: (chatId: string, msgId: string, done: boolean) => update((d) => {
       const m = d.chats.find((x) => x.id === chatId)?.messages.find((x) => x.id === msgId);
@@ -459,7 +484,7 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
     setNotifSetting: (k: string, v: boolean) => update((d) => { d.settings.notif[k] = v; }),
     setSetting: (k: 'ads' | 'quiet' | 'premium', v: boolean) => update((d) => { d.settings[k] = v; }),
     setSanction: (v: 0 | 1 | 2 | 3) => update((d) => { d.sanction = v; }),
-    reset: async () => { await authApi.logout(); localStorage.removeItem(KEY); location.hash = '#/'; location.reload(); },
+    reset: async () => { chatStomp.disconnect(); await authApi.logout(); localStorage.removeItem(KEY); location.hash = '#/'; location.reload(); },
     initial: () => initialState(),
     users: USERS,
   };
@@ -487,8 +512,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setApiHandlers({
       onError: (message) => toast(message, 'err'),
       onLoggedOut: () => {
+        chatStomp.disconnect();
         update((d) => {
           d.verified = false;
+          d.myUserId = undefined;
           d.serverPeople = undefined;
           d.serverRooms = undefined;
           d.serverRoomRecos = undefined;
@@ -498,6 +525,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast('로그인이 만료됐어요. 다시 인증해 주세요', 'info');
       },
     });
+    return chatStomp.onError((err) => toast(err.message || '메시지를 보내지 못했어요', 'err'));
   }, [toast, update]);
   // 앱을 켤 때 서버의 내 프로필로 맞춘다 (연동 가이드 '프론트를 고치는 방식' 3번)
   useEffect(() => { a.loadMe(); }, [a]);

@@ -8,6 +8,7 @@ import { Avatar, Empty, Icon, Skeleton, TopBar } from '../components/ui';
 import { ReportIcon, SosButton } from '../components/safety';
 import { authApi } from '../api/auth';
 import { chatsApi, ServerChatMessage } from '../api/chats';
+import { chatStomp } from '../api/stomp';
 import { toUser } from '../api/recommend';
 import { roomsApi } from '../api/rooms';
 
@@ -26,6 +27,23 @@ export function ChatList() {
   useEffect(() => {
     if (loggedIn) a.loadChats();
   }, [a, loggedIn]);
+
+  const chatIdsKey = loggedIn && s.serverChats
+    ? s.serverChats
+      .filter((c) => !(c.kind === 'dm' && c.otherUser && s.blocks.includes(String(c.otherUser.id))))
+      .map((c) => c.id)
+      .sort((x, y) => x - y)
+      .join(',')
+    : '';
+
+  useEffect(() => {
+    if (!loggedIn || !chatIdsKey) return;
+    const ids = chatIdsKey.split(',').map(Number).filter((n) => Number.isFinite(n));
+    const unsubs = ids.map((id) =>
+      chatStomp.subscribeChat(id, (incoming) => a.applyIncomingMessage(incoming, false))
+    );
+    return () => { unsubs.forEach((fn) => fn()); };
+  }, [a, loggedIn, chatIdsKey]);
 
   if (loggedIn) {
     if (s.serverChats === undefined) {
@@ -143,6 +161,8 @@ function ServerChatPanel({ chatId, embedded }: { chatId: string; embedded?: bool
   const [link, setLink] = useState(summary?.link ?? '');
   const [savingLink, setSavingLink] = useState(false);
   const [roomMembers, setRoomMembers] = useState<User[]>([]);
+  const myUserIdRef = useRef(s.myUserId);
+  myUserIdRef.current = s.myUserId;
   const end = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -151,12 +171,18 @@ function ServerChatPanel({ chatId, embedded }: { chatId: string; embedded?: bool
 
   useEffect(() => {
     let alive = true;
+    setMessages([]);
     setLoading(true);
     setNotFound(false);
     chatsApi.messages(numericId, 0, 50, { quiet: true })
       .then((res) => {
         if (!alive) return;
-        setMessages([...res.messages].reverse());
+        const fetched = [...res.messages].reverse();
+        setMessages((prev) => {
+          const seen = new Set(fetched.map((m) => m.id));
+          const extra = prev.filter((m) => m.chatId === numericId && !seen.has(m.id));
+          return [...fetched, ...extra].sort((x, y) => x.id - y.id);
+        });
         setPage(res.page);
         setHasNext(res.hasNext);
         a.loadChats();
@@ -170,6 +196,22 @@ function ServerChatPanel({ chatId, embedded }: { chatId: string; embedded?: bool
       });
     return () => { alive = false; };
   }, [a, numericId]);
+
+  // 14단계: /topic/chat.{chatId} 실시간 구독 (id 기반 중복 제거 + 보고 있는 동안 읽음 동기화)
+  useEffect(() => {
+    if (notFound) return;
+    return chatStomp.subscribeChat(numericId, (incoming) => {
+      const mine = incoming.senderId !== null && myUserIdRef.current !== undefined && incoming.senderId === myUserIdRef.current;
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === incoming.id)) return prev;
+        return [...prev, { ...incoming, mine }];
+      });
+      a.applyIncomingMessage(incoming, true);
+      if (!incoming.system && !mine) {
+        chatsApi.markRead(numericId, { quiet: true }).catch(() => null);
+      }
+    });
+  }, [a, numericId, notFound]);
 
   useEffect(() => {
     if (embedded || !summary?.roomId) { setRoomMembers([]); return; }
@@ -216,10 +258,11 @@ function ServerChatPanel({ chatId, embedded }: { chatId: string; embedded?: bool
     }
   };
 
-  // Step 14(STOMP WebSocket)에서 실시간 송신으로 교체될 지점
   const submit = () => {
-    if (!text.trim()) return;
-    a.send(chatId, text);
+    const t = text.trim();
+    if (!t) return;
+    a.send(chatId, t);
+    setText('');
   };
 
   if (notFound) {
@@ -287,10 +330,11 @@ function ServerChatPanel({ chatId, embedded }: { chatId: string; embedded?: bool
         ) : (
           messages.map((m) => {
             if (m.system) return <div key={m.id} className="sysmsg">{m.text}</div>;
+            const isMine = m.mine || (s.myUserId !== undefined && m.senderId === s.myUserId);
             return (
-              <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: m.mine ? 'flex-end' : 'flex-start', gap: 2 }}>
-                {!m.mine && m.senderNick && <span className="cap" style={{ marginLeft: 4 }}>{m.senderNick}</span>}
-                <div className={`bub ${m.mine ? 'me' : ''}`}>{m.text}</div>
+              <div key={m.id} style={{ display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', gap: 2 }}>
+                {!isMine && m.senderNick && <span className="cap" style={{ marginLeft: 4 }}>{m.senderNick}</span>}
+                <div className={`bub ${isMine ? 'me' : ''}`}>{m.text}</div>
               </div>
             );
           })
@@ -313,7 +357,7 @@ function ServerChatPanel({ chatId, embedded }: { chatId: string; embedded?: bool
         {other && <button className="btn secondary m" onClick={() => a.send(chatId, '이 시간으로 정해요!')}>이 시간으로 정하기</button>}
         <div className="chips scroll" style={{ margin: 0, padding: 0 }}>{QUICK.map((q) => <button key={q} className="chip" onClick={() => a.send(chatId, q)}>{q}</button>)}</div>
         <form className="row" onSubmit={(e) => { e.preventDefault(); submit(); }}>
-          <input className="input" style={{ height: 48, borderRadius: 24 }} aria-label="메시지 입력" placeholder="메시지를 입력하세요" value={text} onChange={(e) => setText(e.target.value)} />
+          <input className="input" maxLength={1000} style={{ height: 48, borderRadius: 24 }} aria-label="메시지 입력" placeholder="메시지를 입력하세요" value={text} onChange={(e) => setText(e.target.value)} />
           <button className="iconbtn" type="submit" aria-label="보내기" style={{ background: 'var(--primary)', color: 'var(--on-primary)', borderRadius: 24 }}><Icon n="send" /></button>
         </form>
       </div>

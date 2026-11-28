@@ -17,6 +17,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.chatssl.anytime.chat.dto.ChatBroadcastMessage;
 import com.chatssl.anytime.chat.dto.ChatMessageResponse;
 import com.chatssl.anytime.chat.dto.ChatMessagesPageResponse;
 import com.chatssl.anytime.chat.dto.ChatRoomInfo;
@@ -43,13 +44,14 @@ import com.chatssl.anytime.user.dto.UserProfileResponse;
 
 import lombok.RequiredArgsConstructor;
 
-/** 13단계: 채팅방 목록, 메시지 페이지 조회·읽음 처리, 모임방 오픈채팅 링크 저장 */
+/** 13~14단계: 채팅방 목록, 메시지 페이지 조회·읽음 처리, 오픈채팅 링크 저장, 실시간 메시지 저장 */
 @Service
 @RequiredArgsConstructor
 public class ChatService {
 
     static final int MAX_PAGE_SIZE = 100;
     static final int LINK_MAX = 255;
+    static final int MESSAGE_MAX = 1000;
 
     private final ChatRepository chatRepository;
     private final ChatMemberRepository chatMemberRepository;
@@ -193,6 +195,40 @@ public class ChatService {
         ChatMessageResponse lastDto = latest.isEmpty() ? null : ChatMessageResponse.of(latest.get(0), userId);
         long unread = countUnread(chatId, access.member().getLastReadAt());
         return ChatSummaryResponse.of(chat, roomInfo, null, lastDto, unread);
+    }
+
+    /**
+     * 14단계 STOMP 실시간 메시지 저장.
+     * - 제재 상태(sanction >= 2), 채팅방 참여 여부, DM 양방향 차단, 본문 공백/1000자 제한 검증
+     * - DB 저장 및 발신자 lastReadAt 갱신이 트랜잭션 커밋까지 성공한 뒤에만 컨트롤러가 브로드캐스트한다.
+     */
+    @Transactional
+    public ChatBroadcastMessage sendMessage(Long userId, Long chatId, String rawText) {
+        if (userId == null) {
+            throw new ApiException(ErrorCode.UNAUTHORIZED);
+        }
+        if (chatId == null) {
+            throw new ApiException(ErrorCode.INVALID_INPUT, "채팅방 정보를 확인해 주세요");
+        }
+        User sender = findUser(userId);
+        if (sender.getSanction() >= 2) {
+            throw new ApiException(ErrorCode.USER_SUSPENDED);
+        }
+        if (rawText == null || rawText.isBlank()) {
+            throw new ApiException(ErrorCode.INVALID_INPUT, "메시지를 입력해 주세요");
+        }
+        String trimmed = rawText.trim();
+        if (trimmed.length() > MESSAGE_MAX) {
+            throw new ApiException(ErrorCode.INVALID_INPUT, "메시지는 1000자까지 쓸 수 있어요");
+        }
+
+        ChatAccess access = verifyAccess(userId, chatId);
+        LocalDateTime now = LocalDateTime.now(clock);
+        Message saved = messageRepository.saveAndFlush(new Message(access.chat(), sender, trimmed));
+        access.member().setLastReadAt(now);
+        chatMemberRepository.save(access.member());
+
+        return ChatBroadcastMessage.of(saved, now);
     }
 
     private ChatAccess verifyAccess(Long userId, Long chatId) {

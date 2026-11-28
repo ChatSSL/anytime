@@ -64,4 +64,6 @@ export interface AppState {
   /** 서버 채팅 목록·1:1 DM 요청 (13단계). 로그인 전이면 undefined */
   serverChats?: ServerChatSummary[];
   serverDmRequests?: ServerDmRequestList;
+  /** 로그인한 사용자의 서버 userId (14단계 STOMP 브로드캐스트 내 메시지 판별용) */
+  myUserId?: number;
 }

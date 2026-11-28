@@ -193,6 +193,20 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - **에러 코드**: `CHAT_NOT_FOUND`, `CHAT_FORBIDDEN`, `CHAT_LINK_NOT_ALLOWED`, `DM_REQUEST_NOT_FOUND`, `DM_REQUEST_SELF`, `DM_REQUEST_ALREADY_EXISTS`, `DM_REQUEST_ALREADY_PROCESSED`, `DM_CHAT_ALREADY_EXISTS`
 - **프론트**: `src/api/chats.ts`를 추가하고 `Chat.tsx`·`Rooms.tsx`·`Person.tsx`·`Notifications.tsx`·`App.tsx`·`store.tsx`를 연결했다. 채팅 목록·메시지 페이징("이전 메시지 더 보기")·읽음 배지·오픈채팅 링크·모임 상세 임베드 채팅·1:1 요청 전송/수락/거절이 서버를 탄다(비로그인 시연용 로컬 fallback 유지). 실시간 메시지 전송(`send`)은 14단계(STOMP WebSocket)에서 연결한다
 
+## 실시간 채팅 WebSocket · STOMP (14단계)
+
+| 구분 | 경로 / 설명 |
+| --- | --- |
+| Handshake | `/ws/chat` (네이티브 WebSocket, SockJS 미사용). 허용 Origin은 `app.ws.allowed-origin-patterns`(`${WS_ALLOWED_ORIGINS:...}`)로 주입한다 |
+| 브로커 / 프리픽스 | Simple Broker `/topic`·`/queue`, 앱 프리픽스 `/app`, 사용자 프리픽스 `/user` |
+| 메시지 전송 | `SEND /app/chat.send` (`{"chatId": ..., "text": "..."}`). `senderId`는 받지 않고 인증된 `Principal`에서 꺼낸다 |
+| 채팅방 구독 | `SUBSCRIBE /topic/chat.{chatId}`. 활성 `chat_members` 참여자이면서 DM 차단 관계가 아닐 때만 허용한다 |
+| 에러 수신 | `SUBSCRIBE /user/queue/errors`. 전송 검증·권한 오류(`ApiException`)를 `{code, message}`로 내려주어 소켓 세션을 유지한다 |
+
+- **인증·인가 (`StompAuthChannelInterceptor`)**: `CONNECT` 프레임의 `Authorization: Bearer <token>`을 `JwtProvider.parseAccessToken`으로 검증해 `Principal`에 등록하고(토큰 원문 로깅 금지), `SUBSCRIBE`·`SEND` 단계에서 참여자 권한과 DM 양방향 차단을 검사한다. `SecurityConfig.java`는 수정하지 않았다
+- **선저장 후 브로드캐스트**: `ChatService.sendMessage`(`@Transactional`)가 제재(`sanction >= 2`)·참여자·차단·본문(공백 금지, 1,000자 이하)을 검증하고 `messages` 저장(`saveAndFlush`) 및 보낸 사람 `last_read_at` 갱신을 커밋한 뒤, `ChatStompController`에서 `/topic/chat.{chatId}`로 `ChatBroadcastMessage`를 브로드캐스트한다
+- **프론트**: `@stomp/stompjs`와 `vite.config.ts`의 `/ws`(`ws: true`) 프록시를 추가했다. `src/api/stomp.ts`가 `beforeConnect`에서 최신 토큰을 주입하고 만료 시 `refreshAccessToken()`으로 재연결하며, `Chat.tsx`(`ServerChatPanel`·`ChatList`)·`store.tsx`에서 실시간 메시지 수신·중복 제거·`myUserId` 기준 내 말풍선 판별·읽음 동기화·에러 토스트·로그아웃 시 소켓 종료를 처리한다
+
 ## 브랜치와 PR 규칙
 
 - `main`에는 직접 push하지 않는다. PR로만 합친다
@@ -231,3 +245,4 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - [x] 11단계: 모임 CRUD API (`GET/POST /rooms`, `GET /rooms/:id`, 필터·동적 상태 계산·채팅방 동시 생성·차단 제외), 모임 목록·상세·생성·추천 화면 연결
 - [x] 12단계: 공통 알림 메서드(`NotificationService.notify`) 및 모임 합류·탈퇴·방장 관리 API (`POST /rooms/:id/join`, `/leave`, `/cancel`, `/host`, 동시성 제어·동시간대 중복 차단·1시간 전 취소 패널티·방장 자동 위임), 모임·마이페이지·인증 화면 연동
 - [x] 13단계: 채팅 목록·메시지 페이징·읽음·오픈채팅 링크 API (`GET /chats`, `/chats/:id/messages`, `POST /chats/:id/read`, `PATCH /chats/:id/link`) 및 1:1 DM 요청·수락·거절 API (`/dm-requests`), 채팅·프로필·알림 화면 연결
+- [x] 14단계: Spring WebSocket + STOMP 실시간 채팅 (`/ws/chat`, `/app/chat.send`, `/topic/chat.{chatId}`, `/user/queue/errors`), `ChannelInterceptor` JWT·구독 권한 검증, 커밋 후 브로드캐스트 및 `@stomp/stompjs` 프론트 연동
