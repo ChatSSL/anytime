@@ -43,4 +43,11 @@ public interface RoomRepository extends JpaRepository<Room, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from Room r where r.id = :id")
     Optional<Room> findByIdForUpdate(@Param("id") Long id);
+
+    /** 18단계 크론: 오늘까지(오늘 포함) 모이는 status 상태의 방. 시작·종료 처리 후보 */
+    @Query("""
+        select r from Room r join fetch r.host
+        where r.status = :status and r.meetDate <= :today
+        """)
+    List<Room> findDueBy(@Param("status") RoomStatus status, @Param("today") LocalDate today);
 }

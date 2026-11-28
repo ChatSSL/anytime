@@ -50,6 +50,9 @@ app:
     refresh-days: 14
   ws:
     allowed-origin-patterns: ${WS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:8080,http://127.0.0.1:5173,http://127.0.0.1:8080}
+  cron:
+    enabled: ${CRON_ENABLED:true}          # 18단계 1분 주기 작업 (자동 취소·완료, 리마인드, 평가 반영)
+    rating-delay-minutes: 60               # 평가가 들어오고 이만큼 지나야 매너 점수에 반영 (평가자 익명성)
 
 logging:
   level:
@@ -78,6 +81,8 @@ app:
   auth:
     # 로컬 전용: POST /api/auth/dev-login {"userId": 1} 로 시드 사용자 토큰을 바로 받는다
     dev-login: true
+  cron:
+    rating-delay-minutes: 0   # 로컬 시험용: 평가를 바로 매너 점수에 반영
 
 ---
 spring:

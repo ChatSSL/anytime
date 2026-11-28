@@ -285,6 +285,38 @@ POST 본문 예시
   - `readNotif`·`readAllNotifs`는 화면을 먼저 바꾸고 서버 저장은 뒤에서 한다
   - 차단 목록 화면(`Me.tsx`의 `Blocked`)은 로그인하면 서버 목록(`serverBlocked`)을 쓴다
 
+## 18단계: 크론 작업 (4번)
+
+`@EnableScheduling`(config/SchedulingConfig) + `cron/CronScheduler`가 **1분마다** 아래 작업을 순서대로 돌린다. 시간은 모두 `Clock`(Asia/Seoul) 기준이다.
+
+| 순서 | 작업 | 하는 일 |
+|---|---|---|
+| 1 | 자동 취소·완료 | 시작 시각이 지났는데 참여자 2명 미만이면 `CANCELED` + 취소 알림(운영팀 모임 제외). 끝난 모임은 `DONE` + 평가 요청 알림(`/review/{id}`, 이미 평가한 사람 제외). 채팅방에 시스템 메시지 |
+| 2 | 일정 변경 정리 | 시작 30분 전 마감까지 답이 안 끝난 일정 변경(15단계)은 `REJECTED`. 일정은 그대로, '답변 필요' 표시 해제 |
+| 3 | 리마인드 | 시작 1시간 전 안에 들어온 모임 참여자에게 '곧 모임이 시작돼요' (한 사람에 한 번, 2명 미만 모임 제외) |
+| 4 | 평가 반영 | 들어온 지 `rating-delay-minutes`가 지난 평가(16단계, `applied_at` NULL)를 매너 점수에 반영하고 `applied_at`을 채운다 |
+
+- 매너 점수 변화: 5점 +0.2 / 4점 +0.1 / 3점 0 / 2점 −0.2 / 1점 −0.5, 30.0~45.0 사이로 자른다.
+- 30분 전 모집 마감은 `RoomPhase`가 조회 시점에 계산하므로 크론이 할 일이 없다.
+- 오래된 모임(취소는 시작 24시간, 완료는 종료 7일 넘은 것)은 상태만 정리하고 알림은 보내지 않는다.
+- 사용자의 합류·나가기와 겹치지 않게 방을 잠그고(`findByIdForUpdate`) 다시 확인한 뒤 처리한다.
+- 한 작업이 실패해도 다음 작업은 돈다. 처리한 게 있을 때만 `[cron]` 로그를 남긴다.
+
+설정 (`application.yml`)
+```yaml
+app:
+  cron:
+    enabled: ${CRON_ENABLED:true}   # false면 크론이 돌지 않는다
+    rating-delay-minutes: 60        # 서버 기본. local 프로필은 0 (바로 반영)
+```
+
+로컬 시험: Swagger '개발용' → `POST /api/dev/cron/run`으로 1분을 기다리지 않고 바로 한 번 돌릴 수 있다 (dev-login처럼 local 프로필에서만 생김). 응답 예: `{"closeStarted": {"cancelled": 0, "finished": 1}, "rejectStaleChanges": 0, "remind": 2, "applyRatings": 2}`
+
+주의: 평가 `created_at`은 DB 서버 시각으로 들어가므로, 19단계 배포 때 서버 시간대를 Asia/Seoul로 맞춘다.
+
+다른 사람 파일 수정: `RoomRepository`·`RoomChangeRepository`·`RatingRepository`·`NotificationRepository`에 조회 메서드를 **추가만** 했고, `application.yml`에 `app.cron` 설정을 추가했다. 엔티티·schema.sql·SecurityConfig는 건드리지 않았다.
+
+
 ## 브랜치와 PR 규칙
 
 - `main`에는 직접 push하지 않는다. PR로만 합친다
@@ -324,6 +356,8 @@ POST 본문 예시
 - [x] 12단계: 공통 알림 메서드(`NotificationService.notify`) 및 모임 합류·탈퇴·방장 관리 API (`POST /rooms/:id/join`, `/leave`, `/cancel`, `/host`, 동시성 제어·동시간대 중복 차단·1시간 전 취소 패널티·방장 자동 위임), 모임·마이페이지·인증 화면 연동
 - [x] 13단계: 채팅 목록·메시지 페이징·읽음·오픈채팅 링크 API (`GET /chats`, `/chats/:id/messages`, `POST /chats/:id/read`, `PATCH /chats/:id/link`) 및 1:1 DM 요청·수락·거절 API (`/dm-requests`), 채팅·프로필·알림 화면 연결
 - [x] 14단계: Spring WebSocket + STOMP 실시간 채팅 (`/ws/chat`, `/app/chat.send`, `/topic/chat.{chatId}`, `/user/queue/errors`), `ChannelInterceptor` JWT·구독 권한 검증, 커밋 후 브로드캐스트 및 `@stomp/stompjs` 프론트 연동
+
 - [x] 15단계 일정 변경 투표 (4번) — `POST /api/rooms/{id}/changes`, `GET .../changes/pending`, `POST /api/changes/{id}/vote`
 - [x] 16단계 참석 확인·상호 평가 (4번) — `GET /api/reviews`, `GET·POST /api/rooms/{id}/review`. 점수 반영은 18단계 크론
 - [x] 17단계: 신고·차단·알림 API (`/api/blocks`, `/api/reports`, `/api/notifications`), 신고·차단 시트·차단 목록·알림 센터 연결
+- [x] 18단계 크론 (4번) — 1분마다 자동 취소·완료(평가 요청 알림), 일정 변경 무산 처리, 1시간 전 리마인드, 평가 → 매너 점수 반영. 로컬 시험은 `POST /api/dev/cron/run`
