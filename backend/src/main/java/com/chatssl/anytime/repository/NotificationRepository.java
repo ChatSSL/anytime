@@ -46,4 +46,15 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     /** 15단계: 일정 변경처럼 link로 묶이는 '답변 필요' 알림 중 아직 처리 안 한 것 */
     List<Notification> findByUserIdAndTypeAndLinkAndNeedsActionTrueAndResolvedIsNull(
         Long userId, NotifType type, String link);
+
+    /** 18단계 크론: 리마인드를 이미 보냈는지 */
+    boolean existsByUserIdAndTypeAndLink(Long userId, NotifType type, String link);
+
+    /** 18단계 크론: 무산된 일정 변경의 '답변 필요' 표시를 끈다 */
+    @Modifying(clearAutomatically = true)
+    @Query("""
+        update Notification n set n.needsAction = false
+        where n.type = :type and n.link = :link and n.needsAction = true and n.resolved is null
+        """)
+    int clearPendingAction(@Param("type") NotifType type, @Param("link") String link);
 }
