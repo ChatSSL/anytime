@@ -152,6 +152,61 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - 프론트: `src/api/recommend.ts`. 로그인하면 앱 시작·시간표 저장·프로필 저장 뒤에 `GET /recommend/people`을 받아 `serverPeople`에 두고, 홈·모임 화면의 사람 추천이 이걸 쓴다. `Person.tsx`는 서버 id(숫자)를 받으면 추천 목록의 겹치는 공강을 쓰고, 목록에 없으면 `GET /users/{id}`로 프로필만 받는다
 - 모임 추천 화면은 아직 프론트 `derive.ts`를 쓴다(모임이 아직 `data.ts`에 있어서 id가 서버와 다르다). **11단계에서 모임을 서버로 옮길 때** `recommendApi.rooms()`로 바꾸면 된다 (응답 타입 `ServerRoomReco`는 만들어 두었다)
 
+## 모임 (11단계)
+
+| API | 설명 |
+| --- | --- |
+| `GET /api/rooms` | 열린 모임 목록. `day`, `activity`, `place`, `afterMin`, `minCap`, 공강 겹침(`fitOnly`), 내 모임(`mine`) 필터 지원. 차단 관계인 사람이 방장인 모임은 빠진다 |
+| `POST /api/rooms` | 모임 만들기. 정지(`sanction >= 2`) 계정은 `403 USER_SUSPENDED`. 모임(`Room`), 방장 `RoomMember`, 모임 채팅(`Chat.forRoom`), 방장 `ChatMember`, 첫 시스템 메시지를 한 트랜잭션으로 만든다 |
+| `GET /api/rooms/{id}` | 모임 상세. `isHost`, `chatId`, 참여자 공개 프로필(`UserProfileResponse`)을 내려준다. 차단 관계인 참여자는 목록에서 빼되 `memberCount`는 실제 인원수를 유지한다. 방이 없거나 비참여자에게 방장이 차단 관계면 `404 ROOM_NOT_FOUND` |
+
+- **방 날짜(`meetDate`)**: `Clock` 기준 오늘 이후(포함) 가장 가까운 `day` 요일로 넣는다. 오늘 요일인데 시작 시간이 이미 지났으면 다음 주 날짜로 잡는다
+- **방 상태**: `RoomPhase.of(room, memberCount, LocalDateTime.now(clock))`를 목록·상세 모두에서 계산해 내려준다
+- **프론트**: `src/api/rooms.ts` 추가. 로그인 상태면 모임 목록, 상세, 생성과 모임 추천(`recommendApi.rooms()`)이 서버를 탄다 (비로그인 시연용 로컬 fallback 유지). 합류·탈퇴(12단계)와 채팅(13·14단계)은 다음 단계에서 서버에 연결한다
+
+## 모임 합류·탈퇴·방장 관리 및 공통 알림 (12단계)
+
+| API | 설명 |
+| --- | --- |
+| `POST /api/rooms/{id}/join` | 모임 합류. 정지(`sanction >= 2`) 계정은 `403 USER_SUSPENDED`로 막고, `Room` 행에 비관적 잠금(`PESSIMISTIC_WRITE`)을 걸어 동시 정원 초과를 방지한다. 같은 날짜(`meetDate`)에 시간이 겹치는 활성 모임이 이미 있으면 `409 CONFLICT`를 반환한다(11단계 모임 생성에도 동일 적용). 이전에 나갔던 참여자는 기존 `room_members` 행의 `left_at`을 비워 재활성화하며, `chat_members` 등록·입장 시스템 메시지·방장 `JOIN` 알림까지 한 트랜잭션으로 처리한다 |
+| `POST /api/rooms/{id}/leave` | 모임 참여 취소. 시작 60분 이내에는 사유(`reason`)가 필수이며(미입력 시 `400 INVALID_INPUT`), `"그냥 못 가요"` 사유면 매너 점수 `0.5` 차감(최저 `30.0`) 및 `cancel_log(penalty=0.5)`를 기록한다. 그 외 사유나 60분 초과 전·진행 중(`closed`) 취소는 빈 사유를 `"단순 취소"`로 처리하고 `penalty=0.0`으로 기록만 남긴다. 방장이 나가면 가장 먼저 합류한 활성 참여자에게 방장을 자동 위임하고 `CHANGE` 알림을 보내며, 남은 인원이 없으면 `CANCELED`로 바꾼다 |
+| `POST /api/rooms/{id}/cancel` | 방장 모임 취소. 방장 권한(`FORBIDDEN`)을 검사한 뒤 상태를 `CANCELED`로 바꾸고 시스템 메시지 기록 및 남은 참여자에게 `CANCEL` 알림을 보낸다(매너 차감 없음) |
+| `POST /api/rooms/{id}/host` | 방장 위임(`{"userId": ...}`). 활성 참여자이면서 제재(`sanction >= 2`)가 없는 대상에게 방장을 넘기고 시스템 메시지 및 `CHANGE` 알림을 보낸다 |
+
+- **동적 상태 및 에러 코드**: `join`은 `RoomPhase.joinable()`(`open`/`soon`)일 때만 허용하며 상태에 따라 `ROOM_FULL`, `ROOM_CLOSED`, `ROOM_ENDED`, `ROOM_CANCELLED`, `ROOM_ALREADY_JOINED`를 내려준다. 차단 관계인 방장의 모임은 `404 ROOM_NOT_FOUND`, 차단 관계인 일반 참여자가 있는 모임은 `403 FORBIDDEN`으로 막는다
+- **공통 알림 메서드 (`NotificationService.notify`)**: 알림 저장과 `users.settings.notif.<type>` 수신 여부 확인을 한곳에서 처리한다(`settings`나 해당 알림 키가 없으면 기본값 `true`로 발송). 이후 13단계 1:1 요청·18단계 크론 알림도 이 메서드를 쓴다
+- **프론트**: `src/api/rooms.ts`에 `join`·`leave`·`cancel`·`transferHost`를 추가하고 `Rooms.tsx`(`RoomDetail`)·`store.tsx`에 연결했다. 추가로 `derive.ts`(`myRooms` 서버 목록 필터링), `Me.tsx`(마운트 시 `loadRooms`), `Rooms.tsx`(`RoomCreate` 동시간대 모임 중복 차단), `Auth.tsx`(기존 회원 재로그인 시 프로필 설정 생략), `store.tsx`(DB 초기화 등으로 `404 USER_NOT_FOUND` 시 자동 로그아웃)까지 반영했다 (비로그인 시연용 로컬 fallback 유지)
+
+## 채팅 조회 및 1:1 요청 (13단계)
+
+| API | 설명 |
+| --- | --- |
+| `GET /api/chats` | 참여 중인 모임(`ROOM`)·1:1(`DM`) 채팅 목록(최신 활동 순). 모임 메타(`ChatRoomInfo`) 또는 상대 공개 프로필(`UserProfileResponse`), 마지막 메시지, 안 읽은 수(`unreadCount`)를 내려준다. 양방향 차단 관계인 DM 채팅방은 빠진다 |
+| `GET /api/chats/{id}/messages` | 채팅 메시지 최신순(`id DESC`) 페이징 조회(`?page=0&size=50`). 참여자 권한과 DM 차단 여부를 검사하고 `chat_members.last_read_at`을 현재 시각으로 갱신한다 |
+| `POST /api/chats/{id}/read` | 채팅방 읽음 시각(`last_read_at`) 갱신 (`204 No Content`) |
+| `PATCH /api/chats/{id}/link` | 모임(`ROOM`) 채팅방 오픈채팅 링크 등록·수정·삭제(빈 값/`null` 허용). DM 채팅방은 `400 CHAT_LINK_NOT_ALLOWED`, 값이 있으면 `http://`·`https://` 형식과 255자 이하를 검사한다 |
+| `POST /api/dm-requests` | 1:1 만남 요청 전송. 자기 자신(`400 DM_REQUEST_SELF`), 차단 관계(`404 USER_NOT_FOUND`), 이미 열린 DM 채팅방(`409 DM_CHAT_ALREADY_EXISTS`), 양방향 대기 요청 중복(`409 DM_REQUEST_ALREADY_EXISTS`)을 막고 상대에게 `REQUEST` 알림을 보낸다 |
+| `GET /api/dm-requests` | 차단 사용자를 제외한 받은 대기 요청(`received`)과 보낸 요청(`sent`)을 `{received, sent}`로 내려준다 |
+| `POST /api/dm-requests/{id}/accept` | 1:1 요청 수락. 비관적 잠금(`PESSIMISTIC_WRITE`)으로 중복 수락을 막고, 기존 DM 채팅방이 있으면 재사용·없으면 새로 만들어 공강 안내 시스템 메시지와 요청 메시지를 저장한다. 수신자의 `REQUEST` 알림을 `ACCEPTED`로 처리하고 요청자에게 `JOIN` 알림을 보낸다 |
+| `POST /api/dm-requests/{id}/decline` | 1:1 요청 거절. 비관적 잠금 후 상태를 `DECLINED`로 바꾸고 `REQUEST` 알림을 `DECLINED`로 처리한다 |
+
+- **에러 코드**: `CHAT_NOT_FOUND`, `CHAT_FORBIDDEN`, `CHAT_LINK_NOT_ALLOWED`, `DM_REQUEST_NOT_FOUND`, `DM_REQUEST_SELF`, `DM_REQUEST_ALREADY_EXISTS`, `DM_REQUEST_ALREADY_PROCESSED`, `DM_CHAT_ALREADY_EXISTS`
+- **프론트**: `src/api/chats.ts`를 추가하고 `Chat.tsx`·`Rooms.tsx`·`Person.tsx`·`Notifications.tsx`·`App.tsx`·`store.tsx`를 연결했다. 채팅 목록·메시지 페이징("이전 메시지 더 보기")·읽음 배지·오픈채팅 링크·모임 상세 임베드 채팅·1:1 요청 전송/수락/거절이 서버를 탄다(비로그인 시연용 로컬 fallback 유지). 실시간 메시지 전송(`send`)은 14단계(STOMP WebSocket)에서 연결한다
+
+## 실시간 채팅 WebSocket · STOMP (14단계)
+
+| 구분 | 경로 / 설명 |
+| --- | --- |
+| Handshake | `/ws/chat` (네이티브 WebSocket, SockJS 미사용). 허용 Origin은 `app.ws.allowed-origin-patterns`(`${WS_ALLOWED_ORIGINS:...}`)로 주입한다 |
+| 브로커 / 프리픽스 | Simple Broker `/topic`·`/queue`, 앱 프리픽스 `/app`, 사용자 프리픽스 `/user` |
+| 메시지 전송 | `SEND /app/chat.send` (`{"chatId": ..., "text": "..."}`). `senderId`는 받지 않고 인증된 `Principal`에서 꺼낸다 |
+| 채팅방 구독 | `SUBSCRIBE /topic/chat.{chatId}`. 활성 `chat_members` 참여자이면서 DM 차단 관계가 아닐 때만 허용한다 |
+| 에러 수신 | `SUBSCRIBE /user/queue/errors`. 전송 검증·권한 오류(`ApiException`)를 `{code, message}`로 내려주어 소켓 세션을 유지한다 |
+
+- **인증·인가 (`StompAuthChannelInterceptor`)**: `CONNECT` 프레임의 `Authorization: Bearer <token>`을 `JwtProvider.parseAccessToken`으로 검증해 `Principal`에 등록하고(토큰 원문 로깅 금지), `SUBSCRIBE`·`SEND` 단계에서 참여자 권한과 DM 양방향 차단을 검사한다. `SecurityConfig.java`는 수정하지 않았다
+- **선저장 후 브로드캐스트**: `ChatService.sendMessage`(`@Transactional`)가 제재(`sanction >= 2`)·참여자·차단·본문(공백 금지, 1,000자 이하)을 검증하고 `messages` 저장(`saveAndFlush`) 및 보낸 사람 `last_read_at` 갱신을 커밋한 뒤, `ChatStompController`에서 `/topic/chat.{chatId}`로 `ChatBroadcastMessage`를 브로드캐스트한다
+- **프론트**: `@stomp/stompjs`와 `vite.config.ts`의 `/ws`(`ws: true`) 프록시를 추가했다. `src/api/stomp.ts`가 `beforeConnect`에서 최신 토큰을 주입하고 만료 시 `refreshAccessToken()`으로 재연결하며, `Chat.tsx`(`ServerChatPanel`·`ChatList`)·`store.tsx`에서 실시간 메시지 수신·중복 제거·`myUserId` 기준 내 말풍선 판별·읽음 동기화·에러 토스트·로그아웃 시 소켓 종료를 처리한다
+
 ## 브랜치와 PR 규칙
 
 - `main`에는 직접 push하지 않는다. PR로만 합친다
@@ -187,3 +242,7 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - [x] 8단계: 프로필 API (`GET/PATCH /me`, `GET /users/:id`, 닉네임 중복 검사, 학과·관심사 공개 여부), 프로필 화면 연결
 - [x] 9단계: 시간표 API (`GET /me/timetable`, `PUT /me/classes`, `PUT /me/wanted`, 수업 시간 겹침 검사), 시간표 화면 연결
 - [x] 10단계: 추천 API (`GET /recommend/people`, `GET /recommend/rooms`, derive.ts 이식, 차단 양방향 제외), 홈 사람 추천·프로필 화면 연결
+- [x] 11단계: 모임 CRUD API (`GET/POST /rooms`, `GET /rooms/:id`, 필터·동적 상태 계산·채팅방 동시 생성·차단 제외), 모임 목록·상세·생성·추천 화면 연결
+- [x] 12단계: 공통 알림 메서드(`NotificationService.notify`) 및 모임 합류·탈퇴·방장 관리 API (`POST /rooms/:id/join`, `/leave`, `/cancel`, `/host`, 동시성 제어·동시간대 중복 차단·1시간 전 취소 패널티·방장 자동 위임), 모임·마이페이지·인증 화면 연동
+- [x] 13단계: 채팅 목록·메시지 페이징·읽음·오픈채팅 링크 API (`GET /chats`, `/chats/:id/messages`, `POST /chats/:id/read`, `PATCH /chats/:id/link`) 및 1:1 DM 요청·수락·거절 API (`/dm-requests`), 채팅·프로필·알림 화면 연결
+- [x] 14단계: Spring WebSocket + STOMP 실시간 채팅 (`/ws/chat`, `/app/chat.send`, `/topic/chat.{chatId}`, `/user/queue/errors`), `ChannelInterceptor` JWT·구독 권한 검증, 커밋 후 브로드캐스트 및 `@stomp/stompjs` 프론트 연동

@@ -113,22 +113,24 @@ export function TopBar({ title, back = true, right, onBack }: { title?: string; 
 export function RoomCard({ room, full }: { room: Room; full?: boolean }) {
   const { s } = useApp(); const nav = useNavigate();
   const st = roomStatus(room, s), fit = roomFit(room, s);
-  const host = userById(s, room.hostId);
+  const hostNick = room.hostNick ?? userById(s, room.hostId)?.nick ?? '';
+  const count = room.memberCount ?? room.members.length;
+  const joined = room.joined ?? room.members.includes(ME_ID);
   const dim = st === 'closed' || st === 'full' || st === 'ended' || st === 'cancelled';
   return (
     <button className={`card roomcard ${full ? 'full' : ''} ${dim ? 'dim' : ''}`} onClick={() => nav(`/rooms/${room.id}`)} aria-label={`${room.title} 상세`}>
       <div className="row" style={{ alignItems: 'flex-start' }}>
         <span className="act" aria-hidden="true">{room.activity[0]}</span>
         <div className="grow"><h3>{room.title}</h3><p className="cap num">{DAYS[room.day]} {hm(room.start)}–{hm(room.end)}</p></div>
-        {room.members.includes(ME_ID) ? <span className="pill mine">참여 중</span> : <StatusPill st={st} />}
+        {joined ? <span className="pill mine">참여 중</span> : <StatusPill st={st} />}
       </div>
       <p className="cap row" style={{ gap: 4 }}><Icon n="pin" s={14} />{room.place}</p>
       <div className="row" style={{ gap: 10 }}>
-        <div className="bar grow" aria-hidden="true"><i style={{ width: `${(room.members.length / room.cap) * 100}%` }} /></div>
-        <span className="cap num">{room.members.length}/{room.cap}명</span>
+        <div className="bar grow" aria-hidden="true"><i style={{ width: `${(count / room.cap) * 100}%` }} /></div>
+        <span className="cap num">{count}/{room.cap}명</span>
       </div>
       <div className="row between">
-        <span className="cap">{room.official ? '운영팀이 연 모임' : `방장 ${host?.nick ?? ''}`}</span>
+        <span className="cap">{room.official ? '운영팀이 연 모임' : `방장 ${hostNick}`}</span>
         {fit.slot && fit.pct > 0 && <FreeBadge slot={fit.slot} text={fit.pct >= 100 ? '100% 겹침' : `${fit.pct}% 겹침`} />}
       </div>
     </button>

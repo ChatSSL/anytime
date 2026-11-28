@@ -50,6 +50,9 @@ function refresh(): Promise<boolean> {
   return refreshing;
 }
 
+/** STOMP 등 외부 클라이언트가 토큰 만료 시 단일 비행(single-flight) 리프레시를 재사용한다. */
+export const refreshAccessToken = (): Promise<boolean> => refresh();
+
 async function request<T>(method: string, path: string, body?: unknown, opts: Opts = {}, retried = false): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
