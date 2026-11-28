@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Navigate, NavLink, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { useApp } from './store';
+import { authApi } from './api/auth';
 import { Icon, Toasts } from './components/ui';
 import { EmergencySheet } from './components/safety';
 import { Welcome } from './screens/Welcome';
@@ -30,8 +31,12 @@ function Shell() {
   if (!s.verified) return <Navigate to="/auth" replace />;
   if (!s.profile) return <Navigate to="/profile" replace />;
   if (s.classes.length === 0) return <Navigate to="/timetable/setup" replace />;
-  const unreadN = s.notifs.filter((n) => !n.read).length;
-  const unreadC = s.chats.reduce((a, c) => a + c.unread, 0);
+  const loggedIn = authApi.isLoggedIn();
+  const visibleNotifs = loggedIn ? s.notifs.filter((n) => n.id !== 'n2') : s.notifs;
+  const unreadN = visibleNotifs.filter((n) => !n.read).length + (loggedIn ? (s.serverDmRequests?.received.length ?? 0) : 0);
+  const unreadC = s.serverChats
+    ? s.serverChats.reduce((acc, c) => acc + c.unreadCount, 0)
+    : s.chats.reduce((acc, c) => acc + c.unread, 0);
   const showTabs = TABS.some((t) => loc.pathname === t.to);
   return (
     <div className="shell">

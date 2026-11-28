@@ -255,6 +255,8 @@ export function RoomDetail() {
     </div>
   );
 
+  const embeddedChatId = serverMode ? (remote?.chatId ? String(remote.chatId) : undefined) : chat?.id;
+
   return (
     <div className="page">
       <TopBar title="모임 상세" right={<>
@@ -263,7 +265,7 @@ export function RoomDetail() {
       </>} />
       <div className="splitroom">
         {info}
-        {member && chat && st !== 'cancelled' && <ChatPanel chatId={chat.id} embedded />}
+        {member && embeddedChatId && st !== 'cancelled' && <ChatPanel chatId={embeddedChatId} embedded />}
       </div>
 
       <Modal open={cancel && !close1h} onClose={() => setCancel(false)} title="참여를 취소할까요?"

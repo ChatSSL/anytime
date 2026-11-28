@@ -1,3 +1,5 @@
+import type { ServerChatSummary, ServerDmRequestList } from './api/chats';
+
 export type Day = 0 | 1 | 2 | 3 | 4;
 export const DAYS = ['월', '화', '수', '목', '금'] as const;
 
@@ -59,4 +61,7 @@ export interface AppState {
   /** 서버 모임 목록·추천 (11단계). 로그인 전이면 undefined */
   serverRooms?: Room[];
   serverRoomRecos?: RoomReco[];
+  /** 서버 채팅 목록·1:1 DM 요청 (13단계). 로그인 전이면 undefined */
+  serverChats?: ServerChatSummary[];
+  serverDmRequests?: ServerDmRequestList;
 }
