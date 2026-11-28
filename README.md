@@ -207,6 +207,27 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - **선저장 후 브로드캐스트**: `ChatService.sendMessage`(`@Transactional`)가 제재(`sanction >= 2`)·참여자·차단·본문(공백 금지, 1,000자 이하)을 검증하고 `messages` 저장(`saveAndFlush`) 및 보낸 사람 `last_read_at` 갱신을 커밋한 뒤, `ChatStompController`에서 `/topic/chat.{chatId}`로 `ChatBroadcastMessage`를 브로드캐스트한다
 - **프론트**: `@stomp/stompjs`와 `vite.config.ts`의 `/ws`(`ws: true`) 프록시를 추가했다. `src/api/stomp.ts`가 `beforeConnect`에서 최신 토큰을 주입하고 만료 시 `refreshAccessToken()`으로 재연결하며, `Chat.tsx`(`ServerChatPanel`·`ChatList`)·`store.tsx`에서 실시간 메시지 수신·중복 제거·`myUserId` 기준 내 말풍선 판별·읽음 동기화·에러 토스트·로그아웃 시 소켓 종료를 처리한다
 
+## 신고·차단·알림 (17단계)
+
+| API | 설명 |
+| --- | --- |
+| `GET /api/blocks` | 내가 차단한 사람, 최근 순. `[{user, blockedAt}]`. `user`는 `GET /users/{id}`와 같은 공개 프로필 |
+| `POST /api/blocks` | `{"targetUserId": 2}` 차단. 이미 차단했으면 그대로 201. 본인은 `400 BLOCK_SELF` |
+| `DELETE /api/blocks/{targetUserId}` | 차단 해제. 차단한 적이 없어도 204 |
+| `POST /api/reports` | `{"targetUserId", "reason", "detail"?, "roomId"?, "emergency"?}`. `reason`은 프론트 `REPORT_REASONS` 중 하나(긴급 신고는 `"긴급 신고"`), 아니면 `400 REPORT_REASON_INVALID`. 같은 사람은 24시간에 한 번(`429 REPORT_TOO_SOON`, 긴급 신고는 예외). **긴급 신고는 바로 차단까지 한다** (`blocked: true`) |
+| `GET /api/notifications` | 내 알림 최근 100개 `{items: [...], unreadCount}`. `type`·`resolved`는 프론트와 같은 소문자. 차단 관계인 사람이 관련된 알림(1:1 요청 등)은 빠진다 |
+| `POST /api/notifications/{id}/read` | 하나 읽음. 남의 알림이면 `404 NOTIFICATION_NOT_FOUND` |
+| `POST /api/notifications/read-all` | 모두 읽음 `{"updated": 바뀐 개수}` |
+
+- 차단은 `blocks`에 넣기만 한다. 추천(10단계)·1:1 요청(13단계)이 `BlockRepository.findHiddenUserIds()`로 이미 양방향 필터를 하고 있다
+- 신고는 운영팀만 보므로 상대에게 알림을 보내지 않는다
+- 알림을 **만드는** 쪽은 3번의 `NotificationService.notify(...)`, **보는** 쪽은 `notification/NotificationInboxService` (17단계)
+- Swagger에서 `@CurrentUserId` 파라미터(`userId` 입력 칸)를 숨겼다 (`config/OpenApiConfig`). 토큰에서 꺼내는 값이라 입력할 필요가 없다
+- 프론트: `src/api/safety.ts`
+  - 로그인하면 앱 시작 때 `GET /notifications`, `GET /blocks`를 받는다. 알림 화면·차단 목록 화면을 열 때도 다시 받는다
+  - `store.tsx`의 `block`·`unblock`·`report`는 서버를 거치고 성공하면 `true`를 돌려준다. 차단이 바뀌면 추천·모임·채팅·1:1 요청·알림을 다시 받는다
+  - `readNotif`·`readAllNotifs`는 화면을 먼저 바꾸고 서버 저장은 뒤에서 한다
+  - 차단 목록 화면(`Me.tsx`의 `Blocked`)은 로그인하면 서버 목록(`serverBlocked`)을 쓴다
 ## 브랜치와 PR 규칙
 
 - `main`에는 직접 push하지 않는다. PR로만 합친다
@@ -246,3 +267,4 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - [x] 12단계: 공통 알림 메서드(`NotificationService.notify`) 및 모임 합류·탈퇴·방장 관리 API (`POST /rooms/:id/join`, `/leave`, `/cancel`, `/host`, 동시성 제어·동시간대 중복 차단·1시간 전 취소 패널티·방장 자동 위임), 모임·마이페이지·인증 화면 연동
 - [x] 13단계: 채팅 목록·메시지 페이징·읽음·오픈채팅 링크 API (`GET /chats`, `/chats/:id/messages`, `POST /chats/:id/read`, `PATCH /chats/:id/link`) 및 1:1 DM 요청·수락·거절 API (`/dm-requests`), 채팅·프로필·알림 화면 연결
 - [x] 14단계: Spring WebSocket + STOMP 실시간 채팅 (`/ws/chat`, `/app/chat.send`, `/topic/chat.{chatId}`, `/user/queue/errors`), `ChannelInterceptor` JWT·구독 권한 검증, 커밋 후 브로드캐스트 및 `@stomp/stompjs` 프론트 연동
+- [x] 17단계: 신고·차단·알림 API (`/api/blocks`, `/api/reports`, `/api/notifications`), 신고·차단 시트·차단 목록·알림 센터 연결
