@@ -53,4 +53,19 @@ public interface RoomMemberRepository extends JpaRepository<RoomMember, RoomMemb
         @Param("startMin") int startMin,
         @Param("endMin") int endMin
     );
+
+    /** 16단계: 평가할 수 있는 내 모임 후보 (from~to 사이에 모였고 취소되지 않은 방). 방·방장을 같이 읽는다 */
+    @Query("""
+        select m from RoomMember m join fetch m.room r join fetch r.host
+        where m.user.id = :userId
+          and m.leftAt is null
+          and r.status <> :excluded
+          and r.meetDate between :from and :to
+        """)
+    List<RoomMember> findMineBetween(
+        @Param("userId") Long userId,
+        @Param("excluded") RoomStatus excluded,
+        @Param("from") LocalDate from,
+        @Param("to") LocalDate to
+    );
 }
