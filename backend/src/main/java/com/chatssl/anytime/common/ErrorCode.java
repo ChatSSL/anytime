@@ -46,7 +46,26 @@ public enum ErrorCode {
     TIMETABLE_WANTED_NOT_FREE(HttpStatus.BAD_REQUEST, "수업이 있는 시간은 고를 수 없어요"),
 
     // 모임
-    ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "모임을 찾을 수 없어요");
+    ROOM_NOT_FOUND(HttpStatus.NOT_FOUND, "모임을 찾을 수 없어요"),
+    ROOM_ALREADY_JOINED(HttpStatus.CONFLICT, "이미 참여 중인 모임이에요"),
+    ROOM_NOT_MEMBER(HttpStatus.BAD_REQUEST, "참여 중인 모임이 아니에요"),
+    ROOM_FULL(HttpStatus.CONFLICT, "정원이 가득 찬 모임이에요"),
+    ROOM_CLOSED(HttpStatus.CONFLICT, "모집이 마감된 모임이에요"),
+    ROOM_ENDED(HttpStatus.CONFLICT, "이미 끝난 모임이에요"),
+    ROOM_CANCELLED(HttpStatus.CONFLICT, "취소된 모임이에요"),
+    ROOM_HOST_TRANSFER_INVALID(HttpStatus.BAD_REQUEST, "방장을 넘길 수 없는 참여자예요"),
+
+    // 채팅 (13단계)
+    CHAT_NOT_FOUND(HttpStatus.NOT_FOUND, "채팅방을 찾을 수 없어요"),
+    CHAT_FORBIDDEN(HttpStatus.FORBIDDEN, "참여 중인 채팅방이 아니에요"),
+    CHAT_LINK_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "모임 채팅방에서만 오픈채팅 링크를 설정할 수 있어요"),
+
+    // 1:1 요청 (13단계)
+    DM_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "1:1 요청을 찾을 수 없어요"),
+    DM_REQUEST_SELF(HttpStatus.BAD_REQUEST, "본인에게는 1:1 요청을 보낼 수 없어요"),
+    DM_REQUEST_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 진행 중인 1:1 요청이 있어요"),
+    DM_REQUEST_ALREADY_PROCESSED(HttpStatus.CONFLICT, "이미 처리된 1:1 요청이에요"),
+    DM_CHAT_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 연결된 1:1 채팅방이 있어요");
 
     private final HttpStatus status;
     private final String message;

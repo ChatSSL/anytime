@@ -1,17 +1,20 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, ClassBlock, Day, Msg, Profile, Room } from './types';
+import { AppState, ClassBlock, Day, Msg, Profile, Room, Slot } from './types';
 import { initialState, SEED_VERSION, USERS } from './data';
 import { icebreaker } from './lib/ai';
-import { hm } from './lib/time';
+import { hm, slotLabel } from './lib/time';
 import { ME_ID, roomChat, userById, wantedSlots } from './lib/derive';
-import { setApiHandlers } from './api/client';
+import { ApiError, setApiHandlers, tokens } from './api/client';
 import { authApi } from './api/auth';
 import { meApi, toProfile } from './api/me';
 import { fromServer, sameClasses, sameSlots, Timetable, timetableApi } from './api/timetable';
 import { recommendApi } from './api/recommend';
+import { roomsApi, ServerRoomDetail, toRoom } from './api/rooms';
+import { chatsApi, dmRequestsApi, ServerDmRequest } from './api/chats';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
+const isServerId = (id: string) => /^\d+$/.test(id);
 
 function load(): AppState {
   try {
@@ -67,12 +70,37 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
     update((d) => { d.classes = classes; d.wanted = wanted; });
   };
 
-  // ---- 추천 (10단계) ----
+  // ---- 추천 (10단계) & 모임 (11단계) ----
   // 추천은 내 공강·관심사로 계산하므로, 앱 시작·시간표 저장·프로필 저장 뒤에 다시 받는다. 실패하면 이전 목록을 그대로 둔다
   const loadRecommend = async () => {
     if (!authApi.isLoggedIn()) return;
-    const people = await recommendApi.people({ quiet: true }).catch(() => null);
-    if (people) update((d) => { d.serverPeople = people; });
+    const [people, roomRecos] = await Promise.all([
+      recommendApi.people({ quiet: true }).catch(() => null),
+      recommendApi.rooms({ quiet: true }).catch(() => null),
+    ]);
+    update((d) => {
+      if (people) d.serverPeople = people;
+      if (roomRecos) d.serverRoomRecos = roomRecos;
+    });
+  };
+
+  const loadRooms = async () => {
+    if (!authApi.isLoggedIn()) return;
+    const rooms = await roomsApi.list(undefined, { quiet: true }).catch(() => null);
+    if (rooms) update((d) => { d.serverRooms = rooms.map(toRoom); });
+  };
+
+  // ---- 채팅·1:1 DM 요청 (13단계) ----
+  const loadChats = async () => {
+    if (!authApi.isLoggedIn()) return;
+    const chats = await chatsApi.list({ quiet: true }).catch(() => null);
+    if (chats) update((d) => { d.serverChats = chats; });
+  };
+
+  const loadDmRequests = async () => {
+    if (!authApi.isLoggedIn()) return;
+    const reqs = await dmRequestsApi.list({ quiet: true }).catch(() => null);
+    if (reqs) update((d) => { d.serverDmRequests = reqs; });
   };
 
   const flushTimetable = async () => {
@@ -90,7 +118,7 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         const wanted = wantedSlots(getState());
         if (!sameSlots(wanted, synced.wanted)) { synced = await timetableApi.putWanted(wanted); changed = true; }
       } while (dirty);
-      if (changed) loadRecommend();
+      if (changed) { loadRecommend(); loadRooms(); }
     } catch {
       // 토스트는 client.ts가 띄운다. 화면은 서버에 저장된 마지막 상태로 되돌린다
       if (synced) applyServer(synced);
@@ -106,12 +134,16 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
   };
 
   /** 서버 시간표로 채운다. 서버가 비어 있고 이 기기에 시간표가 있으면(로그인 전에 만든 것) 서버로 올린다 */
-  const loadTimetable = async () => {
+  const loadTimetable = async (): Promise<boolean> => {
     const t = await timetableApi.get({ quiet: true }).catch(() => null);
-    if (!t) return;
+    if (!t) return getState().classes.length > 0;
     synced = t;
-    if (t.classes.length === 0 && getState().classes.length > 0) { syncTimetable(); return; }
+    if (t.classes.length === 0 && getState().classes.length > 0) {
+      syncTimetable();
+      return true;
+    }
     applyServer(t);
+    return t.classes.length > 0;
   };
 
   return {
@@ -124,25 +156,53 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       loadRecommend(); // 관심사가 바뀌면 추천 점수도 바뀐다
     },
     /** GET /me, GET /me/timetable. 서버에 프로필·시간표가 있으면(다른 기기에서 만들었거나 다시 로그인) 그걸로 채운다 */
-    loadMe: async () => {
-      if (!authApi.isLoggedIn()) return;
-      const me = await meApi.get({ quiet: true }).catch(() => null);
-      if (!me) return;
+    loadMe: async (): Promise<{ profileCompleted: boolean; hasClasses: boolean } | null> => {
+      if (!authApi.isLoggedIn()) return null;
+      let me;
+      try {
+        me = await meApi.get({ quiet: true });
+      } catch (e) {
+        if (e instanceof ApiError && (e.status === 404 || e.code === 'USER_NOT_FOUND')) {
+          tokens.clear();
+          update((d) => {
+            d.verified = false;
+            d.profile = null;
+            d.serverPeople = undefined;
+            d.serverRooms = undefined;
+            d.serverRoomRecos = undefined;
+            d.serverChats = undefined;
+            d.serverDmRequests = undefined;
+          });
+          toast('계정 정보가 초기화되어 다시 로그인이 필요해요', 'info');
+        }
+        return null;
+      }
       update((d) => {
         d.school = me.school; d.email = me.email;
-        if (me.profileCompleted) d.profile = toProfile(me);
+        d.manner = me.manner; d.completed = me.completed; d.sanction = me.sanction;
+        d.profile = me.profileCompleted ? toProfile(me) : null;
       });
-      await loadTimetable();
-      await loadRecommend();
+      const hasClasses = await loadTimetable();
+      await Promise.all([loadRecommend(), loadRooms(), loadChats(), loadDmRequests()]);
+      return { profileCompleted: me.profileCompleted, hasClasses };
     },
     loadRecommend,
+    loadRooms,
+    loadChats,
+    loadDmRequests,
     // 시간표는 화면에 바로 반영하고 서버 저장(PUT /me/classes, /me/wanted)은 뒤에서 한다. 실패하면 서버 상태로 되돌린다
     addClass: (c: Omit<ClassBlock, 'id'>) => { update((d) => { d.classes.push({ ...c, id: uid() }); }); syncTimetable(); },
     removeClass: (id: string) => { update((d) => { d.classes = d.classes.filter((c) => c.id !== id); }); syncTimetable(); },
     loadExample: (classes: ClassBlock[]) => { update((d) => { d.classes = classes; }); syncTimetable(); },
     toggleWanted: (key: string, v: boolean) => { update((d) => { d.wanted[key] = v; }); syncTimetable(); },
 
-    join: (roomId: string) => {
+    join: async (roomId: string): Promise<ServerRoomDetail | undefined> => {
+      if (authApi.isLoggedIn() && isServerId(roomId)) {
+        const detail = await roomsApi.join(Number(roomId));
+        await Promise.all([loadRooms(), loadRecommend(), loadChats()]);
+        toast('합류했어요. 내 시간표에 일정이 등록됐어요', 'ok');
+        return detail;
+      }
       update((d) => {
         const r = d.rooms.find((x) => x.id === roomId); if (!r || r.members.includes(ME_ID)) return;
         r.members.push(ME_ID);
@@ -150,8 +210,23 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         c.messages.push({ id: uid(), from: 'sys', text: `${d.profile?.nick ?? '나'}님이 합류했어요`, time: clockStr(d) });
       });
       toast('합류했어요. 내 시간표에 일정이 등록됐어요', 'ok');
+      return undefined;
     },
-    leave: (roomId: string, reason: string, penalty: boolean) => {
+    leave: async (roomId: string, reason: string, penalty: boolean): Promise<ServerRoomDetail | undefined> => {
+      if (authApi.isLoggedIn() && isServerId(roomId)) {
+        const detail = await roomsApi.leave(Number(roomId), reason);
+        const [me] = await Promise.all([
+          meApi.get({ quiet: true }).catch(() => null),
+          loadRooms(),
+          loadRecommend(),
+          loadChats(),
+        ]);
+        if (me) {
+          update((d) => { d.manner = me.manner; d.completed = me.completed; d.sanction = me.sanction; });
+        }
+        toast('참여를 취소했어요', 'info');
+        return detail;
+      }
       update((d) => {
         const r = d.rooms.find((x) => x.id === roomId); if (!r) return;
         r.members = r.members.filter((m) => m !== ME_ID);
@@ -161,8 +236,50 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         if (c) c.messages.push({ id: uid(), from: 'sys', text: `${d.profile?.nick ?? '나'}님이 참여를 취소했어요`, time: clockStr(d) });
       });
       toast('참여를 취소했어요', 'info');
+      return undefined;
     },
-    createRoom: (p: Pick<Room, 'title' | 'activity' | 'day' | 'start' | 'end' | 'place' | 'cap' | 'topic'>): string => {
+    cancelRoom: async (roomId: string): Promise<ServerRoomDetail | undefined> => {
+      if (authApi.isLoggedIn() && isServerId(roomId)) {
+        const detail = await roomsApi.cancel(Number(roomId));
+        await Promise.all([loadRooms(), loadRecommend(), loadChats()]);
+        toast('모임을 취소했어요', 'info');
+        return detail;
+      }
+      update((d) => {
+        const r = d.rooms.find((x) => x.id === roomId); if (!r) return;
+        r.status = 'cancelled';
+        const c = roomChat(d, roomId);
+        if (c) c.messages.push({ id: uid(), from: 'sys', text: `${d.profile?.nick ?? '방장'}님이 모임을 취소했어요`, time: clockStr(d) });
+      });
+      toast('모임을 취소했어요', 'info');
+      return undefined;
+    },
+    transferHost: async (roomId: string, userId: string): Promise<ServerRoomDetail | undefined> => {
+      if (authApi.isLoggedIn() && isServerId(roomId) && isServerId(userId)) {
+        const detail = await roomsApi.transferHost(Number(roomId), Number(userId));
+        await Promise.all([loadRooms(), loadRecommend(), loadChats()]);
+        toast('방장을 넘겼어요', 'ok');
+        return detail;
+      }
+      update((d) => {
+        const r = d.rooms.find((x) => x.id === roomId); if (!r) return;
+        r.hostId = userId;
+        const targetNick = userById(d, userId)?.nick ?? '새 방장';
+        const c = roomChat(d, roomId);
+        if (c) c.messages.push({ id: uid(), from: 'sys', text: `${targetNick}님이 새 방장이 되었어요`, time: clockStr(d) });
+      });
+      toast('방장을 넘겼어요', 'ok');
+      return undefined;
+    },
+    createRoom: async (p: Pick<Room, 'title' | 'activity' | 'day' | 'start' | 'end' | 'place' | 'cap' | 'topic'>): Promise<string> => {
+      if (authApi.isLoggedIn()) {
+        const created = await roomsApi.create({
+          title: p.title, activity: p.activity, day: p.day, start: p.start, end: p.end,
+          place: p.place, cap: p.cap, topic: p.topic || undefined,
+        });
+        await Promise.all([loadRooms(), loadRecommend(), loadChats()]);
+        return String(created.id);
+      }
       const id = `r-${uid()}`;
       update((d) => {
         const r: Room = { ...p, id, members: [ME_ID], hostId: ME_ID };
@@ -211,19 +328,45 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       });
       return `dm-${userId}`;
     },
-    requestDm: (userId: string, slot: string, activity: string, message: string) => {
+    requestDm: async (userId: string, slot: Slot, activity: string, message: string): Promise<void> => {
+      if (authApi.isLoggedIn() && isServerId(userId)) {
+        await dmRequestsApi.create({
+          targetUserId: Number(userId),
+          day: slot.day,
+          start: slot.start,
+          end: slot.end,
+          activity,
+          message: message || undefined,
+        });
+        await loadDmRequests();
+        toast('요청을 보냈어요', 'ok');
+        return;
+      }
+      const label = slotLabel(slot);
       update((d) => { d.sentRequests.push(userId); });
       toast('요청을 보냈어요', 'ok');
       setTimeout(() => update((d) => {
         const u = userById(d, userId); if (!u) return;
-        d.notifs.unshift({ id: uid(), type: 'join', title: '요청이 수락됐어요', body: `${u.nick}님이 ${slot} ${activity} 요청을 수락했어요`, time: clockStr(d), read: false, link: `/chat/dm-${userId}` });
+        d.notifs.unshift({ id: uid(), type: 'join', title: '요청이 수락됐어요', body: `${u.nick}님이 ${label} ${activity} 요청을 수락했어요`, time: clockStr(d), read: false, link: `/chat/dm-${userId}` });
         let c = d.chats.find((x) => x.kind === 'dm' && x.userId === userId);
         if (!c) { c = { id: `dm-${userId}`, kind: 'dm', userId, unread: 1, messages: [] }; d.chats.push(c); }
-        c.messages.push({ id: uid(), from: 'sys', text: `서로 공강이 겹치는 ${slot}에 만나요`, time: clockStr(d) });
+        c.messages.push({ id: uid(), from: 'sys', text: `서로 공강이 겹치는 ${label}에 만나요`, time: clockStr(d) });
         if (message) c.messages.push({ id: uid(), from: ME_ID, text: message, time: clockStr(d) });
         c.messages.push({ id: uid(), from: userId, text: '좋아요! 장소는 어디가 편하세요?', time: clockStr(d) });
         c.unread += 1;
       }), 1600);
+    },
+    acceptDmRequest: async (requestId: number): Promise<ServerDmRequest> => {
+      const res = await dmRequestsApi.accept(requestId);
+      await Promise.all([loadDmRequests(), loadChats()]);
+      toast('수락했어요. 채팅으로 장소를 정해 보세요', 'ok');
+      return res;
+    },
+    declineDmRequest: async (requestId: number): Promise<ServerDmRequest> => {
+      const res = await dmRequestsApi.decline(requestId);
+      await loadDmRequests();
+      toast('거절했어요', 'info');
+      return res;
     },
     respondRequest: (notifId: string, accept: boolean) => {
       update((d) => {
@@ -242,6 +385,11 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
 
     send: (chatId: string, text: string) => {
       const t = text.trim(); if (!t) return;
+      if (authApi.isLoggedIn() && isServerId(chatId)) {
+        // TODO(Step 14): STOMP WebSocket(/app/chats/{id}/send)으로 실시간 메시지 송신 교체 예정
+        toast('실시간 메시지 전송은 14단계(WebSocket)에서 연결돼요', 'info');
+        return;
+      }
       update((d) => {
         const c = d.chats.find((x) => x.id === chatId); if (!c) return;
         c.messages.push({ id: uid(), from: ME_ID, text: t, time: clockStr(d) });
@@ -263,8 +411,33 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       const m = d.chats.find((x) => x.id === chatId)?.messages.find((x) => x.id === msgId);
       if (m?.ai) m.ai.done = done;
     }),
-    setLink: (chatId: string, link: string) => update((d) => { const c = d.chats.find((x) => x.id === chatId); if (c) c.link = link; }),
-    markChatRead: (chatId: string) => update((d) => { const c = d.chats.find((x) => x.id === chatId); if (c) c.unread = 0; }),
+    setLink: async (chatId: string, link: string): Promise<string | null> => {
+      const trimmed = link.trim();
+      if (authApi.isLoggedIn() && isServerId(chatId)) {
+        const updated = await chatsApi.updateLink(Number(chatId), trimmed || null);
+        update((d) => {
+          if (d.serverChats) {
+            const idx = d.serverChats.findIndex((x) => x.id === updated.id);
+            if (idx >= 0) d.serverChats[idx] = updated;
+          }
+        });
+        toast(updated.link ? '오픈채팅 링크를 저장했어요' : '오픈채팅 링크를 지웠어요', 'ok');
+        return updated.link;
+      }
+      update((d) => { const c = d.chats.find((x) => x.id === chatId); if (c) c.link = trimmed || undefined; });
+      return trimmed || null;
+    },
+    markChatRead: async (chatId: string): Promise<void> => {
+      if (authApi.isLoggedIn() && isServerId(chatId)) {
+        update((d) => {
+          const c = d.serverChats?.find((x) => x.id === Number(chatId));
+          if (c) c.unreadCount = 0;
+        });
+        await chatsApi.markRead(Number(chatId), { quiet: true }).catch(() => null);
+        return;
+      }
+      update((d) => { const c = d.chats.find((x) => x.id === chatId); if (c) c.unread = 0; });
+    },
 
     readNotif: (id: string) => update((d) => { const n = d.notifs.find((x) => x.id === id); if (n) n.read = true; }),
     readAllNotifs: () => update((d) => { d.notifs.forEach((n) => { n.read = true; }); }),
@@ -313,7 +486,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setApiHandlers({
       onError: (message) => toast(message, 'err'),
-      onLoggedOut: () => { update((d) => { d.verified = false; d.serverPeople = undefined; }); toast('로그인이 만료됐어요. 다시 인증해 주세요', 'info'); },
+      onLoggedOut: () => {
+        update((d) => {
+          d.verified = false;
+          d.serverPeople = undefined;
+          d.serverRooms = undefined;
+          d.serverRoomRecos = undefined;
+          d.serverChats = undefined;
+          d.serverDmRequests = undefined;
+        });
+        toast('로그인이 만료됐어요. 다시 인증해 주세요', 'info');
+      },
     });
   }, [toast, update]);
   // 앱을 켤 때 서버의 내 프로필로 맞춘다 (연동 가이드 '프론트를 고치는 방식' 3번)

@@ -7,6 +7,7 @@ import { sharedConcepts } from '../lib/ai';
 import { MannerGauge, Avatar, Chip, Empty, FreeBadge, Icon, Sheet, Skeleton, TopBar } from '../components/ui';
 import { SafetyMenu } from '../components/safety';
 import { dmChat, mannerLabel, meUser, userById, wantedSlots } from '../lib/derive';
+import { authApi } from '../api/auth';
 import { meApi } from '../api/me';
 import { toUser } from '../api/recommend';
 
@@ -15,16 +16,24 @@ const isServerId = (id?: string) => !!id && /^\d+$/.test(id);
 export function PersonDetail() {
   const { id } = useParams(); const nav = useNavigate(); const [sp] = useSearchParams();
   const { s, a } = useApp();
+  const loggedIn = authApi.isLoggedIn();
+  const serverMode = loggedIn && isServerId(id);
   const known = id ? userById(s, id) : undefined;
   // 추천 목록에 없는 서버 사용자(숫자 id)는 공개 프로필만 받아 온다. 차단 관계면 서버가 404를 준다
   const [remote, setRemote] = useState<User | null | undefined>(undefined);
+  useEffect(() => {
+    if (loggedIn) {
+      a.loadDmRequests();
+      a.loadChats();
+    }
+  }, [a, loggedIn]);
   useEffect(() => {
     if (known || !isServerId(id)) return;
     setRemote(undefined);
     meApi.user(Number(id)).then((p) => setRemote(toUser(p))).catch(() => setRemote(null));
   }, [id, known]);
   const u = known ?? remote ?? undefined;
-  const [req, setReq] = useState(false); const [menu, setMenu] = useState(false);
+  const [req, setReq] = useState(false); const [menu, setMenu] = useState(false); const [busy, setBusy] = useState(false);
   const [slot, setSlot] = useState(''); const [act, setAct] = useState(''); const [msg, setMsg] = useState('');
   useEffect(() => { if (sp.get('request')) setReq(true); }, [sp]);
 
@@ -38,14 +47,30 @@ export function PersonDetail() {
   const reco = s.serverPeople?.find((p) => p.user.id === u.id);
   const slots: Slot[] = reco ? reco.slots : intersectAll(wantedSlots(s), freeSlots(u.classes));
   const shared = reco ? reco.shared : sharedConcepts(meUser(s).interests, u.interests);
-  const sent = s.sentRequests.includes(u.id), dm = dmChat(s, u.id);
+  const serverDm = serverMode ? s.serverChats?.find((c) => c.kind === 'dm' && c.otherUser && String(c.otherUser.id) === u.id) : undefined;
+  const localDm = serverMode ? undefined : dmChat(s, u.id);
+  const dmId = serverDm ? String(serverDm.id) : localDm?.id;
+  const sent = serverMode
+    ? !!s.serverDmRequests?.sent.some((r) => String(r.toUser.id) === u.id && r.status === 'pending')
+    : s.sentRequests.includes(u.id);
+  const incomingReq = serverMode
+    ? s.serverDmRequests?.received.find((r) => String(r.fromUser.id) === u.id && r.status === 'pending')
+    : undefined;
   const acts = [...new Set([...shared, ...u.interests])].slice(0, 6);
   const chosen = slot || (slots[0] ? slotKey(slots[0]) : '');
   const chosenSlot = slots.find((x) => slotKey(x) === chosen);
-  const send = () => {
-    if (!chosenSlot) return;
-    a.requestDm(u.id, slotLabel(chosenSlot), act || acts[0] || '만남', msg.trim());
-    setReq(false);
+  const send = async () => {
+    if (!chosenSlot || busy) return;
+    setBusy(true);
+    try {
+      await a.requestDm(u.id, chosenSlot, act || acts[0] || '만남', msg.trim());
+      setMsg('');
+      setReq(false);
+    } catch {
+      // 에러 토스트는 client.ts가 띄운다
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -77,8 +102,9 @@ export function PersonDetail() {
         <div className="col" style={{ gap: 8 }}><h3>관심 활동</h3><div className="chips">{u.interests.map((i) => <span key={i} className="chip sm">{i}</span>)}</div></div>
 
         <div className="cta">
-          {dm ? <button className="btn" onClick={() => nav(`/chat/${dm.id}`)}>채팅 가기</button>
-            : <button className="btn" disabled={sent || !slots.length} onClick={() => setReq(true)}>{sent ? '요청을 보냈어요' : '1:1 만남 요청하기'}</button>}
+          {dmId ? <button className="btn" onClick={() => nav(`/chat/${dmId}`)}>채팅 가기</button>
+            : incomingReq ? <button className="btn" onClick={() => nav('/notifications')}>받은 1:1 요청 확인하기</button>
+              : <button className="btn" disabled={sent || !slots.length} onClick={() => setReq(true)}>{sent ? '요청을 보냈어요' : '1:1 만남 요청하기'}</button>}
         </div>
       </div>
 
@@ -87,7 +113,7 @@ export function PersonDetail() {
           <div className="col" style={{ gap: 4 }} role="radiogroup">{slots.map((x) => <label key={slotKey(x)} className="check" style={{ padding: '6px 0' }}><input type="radio" name="slot" checked={chosen === slotKey(x)} onChange={() => setSlot(slotKey(x))} /><span className="num">{slotLabel(x)}</span></label>)}</div></div>
         <div className="field"><span className="label">하고 싶은 활동</span><div className="chips">{acts.map((x) => <Chip key={x} on={(act || acts[0]) === x} onClick={() => setAct(x)}>{x}</Chip>)}</div></div>
         <div className="field"><label htmlFor="pm">한 줄 메시지 (선택)</label><input id="pm" className="input" maxLength={50} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="예: 같이 카탄 한 판 어때요?" /><span className="help num">{msg.length}/50</span></div>
-        <button className="btn block" disabled={!chosenSlot} onClick={send}>요청 보내기</button>
+        <button className="btn block" disabled={!chosenSlot || busy} onClick={send}>{busy ? '요청 보내는 중...' : '요청 보내기'}</button>
         <p className="cap center">첫 만남은 교내 공개 장소를 추천해요.</p>
       </Sheet>
       <SafetyMenu open={menu} onClose={() => setMenu(false)} target={u} />

@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { authApi } from '../api/auth';
 import { useApp } from '../store';
 import { Day, DAYS } from '../types';
 import { USERS } from '../data';
@@ -16,6 +18,9 @@ const DEMO_TIMES: { label: string; day: Day; min: number }[] = [
 
 export function Me() {
   const { s, a } = useApp(); const nav = useNavigate();
+  useEffect(() => {
+    if (authApi.isLoggedIn()) a.loadRooms();
+  }, [a]);
   const me = meUser(s); const mine = myRooms(s);
   const done = s.completed, cancelled = s.cancelLog.length;
   const rate = done + cancelled ? Math.round((done / (done + cancelled)) * 100) : 100;

@@ -1,3 +1,5 @@
+import type { ServerChatSummary, ServerDmRequestList } from './api/chats';
+
 export type Day = 0 | 1 | 2 | 3 | 4;
 export const DAYS = ['월', '화', '수', '목', '금'] as const;
 
@@ -9,10 +11,14 @@ export interface User {
   interests: string[]; manner: number; meetups: number; classes: ClassBlock[];
 }
 
+export type RoomStatus = 'open' | 'soon' | 'closed' | 'full' | 'ended' | 'cancelled';
+
 export interface Room {
   id: string; title: string; activity: string;
   day: Day; start: number; end: number; place: string;
   cap: number; members: string[]; hostId: string; topic: string; official?: boolean;
+  meetDate?: string; memberCount?: number; hostNick?: string; status?: RoomStatus;
+  joined?: boolean; fitPct?: number; fitSlot?: Slot;
 }
 
 export interface Msg {
@@ -29,6 +35,7 @@ export interface Notif {
 
 /** 사람 추천 한 줄. 로그인하면 서버(GET /recommend/people), 아니면 derive.ts가 만든다 */
 export interface PersonReco { user: User; slots: Slot[]; shared: string[]; score: number; reason: string }
+export interface RoomReco { room: Room; status: RoomStatus; fit: number }
 
 export interface Report { id: string; targetId: string; reason: string; detail: string; emergency: boolean; roomId?: string }
 export interface Profile { nick: string; dept: string; showDept: boolean; avatar: number; interests: string[] }
@@ -51,4 +58,10 @@ export interface AppState {
   sanction: 0 | 1 | 2 | 3;
   /** 서버 사람 추천 (10단계). 있으면 derive.ts 계산 대신 이걸 쓴다. 로그인 전이면 undefined */
   serverPeople?: PersonReco[];
+  /** 서버 모임 목록·추천 (11단계). 로그인 전이면 undefined */
+  serverRooms?: Room[];
+  serverRoomRecos?: RoomReco[];
+  /** 서버 채팅 목록·1:1 DM 요청 (13단계). 로그인 전이면 undefined */
+  serverChats?: ServerChatSummary[];
+  serverDmRequests?: ServerDmRequestList;
 }
