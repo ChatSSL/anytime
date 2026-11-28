@@ -228,6 +228,38 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
   - `store.tsx`의 `block`·`unblock`·`report`는 서버를 거치고 성공하면 `true`를 돌려준다. 차단이 바뀌면 추천·모임·채팅·1:1 요청·알림을 다시 받는다
   - `readNotif`·`readAllNotifs`는 화면을 먼저 바꾸고 서버 저장은 뒤에서 한다
   - 차단 목록 화면(`Me.tsx`의 `Blocked`)은 로그인하면 서버 목록(`serverBlocked`)을 쓴다
+
+## 16단계: 참석 확인·상호 평가 (4번)
+
+모임이 끝난 뒤(지금 시각이 종료 시각을 지났거나 status=DONE) **7일 안에**, 그 모임에 남아 있던 사람이 **한 번** 낼 수 있다.
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/api/reviews` | 평가할 내 모임(`pending`, 최근 7일)과 이미 평가한 모임 id(`reviewedRoomIds`). 홈 배너용 |
+| GET | `/api/rooms/{roomId}/review` | 평가 화면 정보: 나를 뺀 참여자(차단 관계 제외), `reviewed`, `canReview`, 2점 이하 이유 목록 |
+| POST | `/api/rooms/{roomId}/review` | 참석 확인 + 평가를 한 번에 제출 |
+
+POST 본문 예시
+```json
+{ "presentUserIds": [2, 3],
+  "ratings": [ { "targetUserId": 2, "score": 5 },
+               { "targetUserId": 3, "score": 2, "reason": "시간 약속을 안 지켰어요" } ],
+  "note": "재밌었어요" }
+```
+
+규칙
+- 나는 자동으로 '왔음'으로 기록된다. 그래서 `attendance(room, 나, 나)` 행이 있으면 '평가 완료'다.
+- `presentUserIds`에 넣은 사람(나 제외)은 **모두 한 번씩** 평가해야 한다 (`RATING_MISSING`). 안 온 사람은 평가할 수 없다 (`REVIEW_TARGET_INVALID`).
+- 2점 이하는 `reason`이 `"시간 약속을 안 지켰어요" / "불편한 말을 했어요" / "원치 않는 연락" / "기타"` 중 하나여야 한다 (`RATING_REASON_REQUIRED`).
+- 참여자 **과반**(2명→2, 3명→2, 4명→3)이 '왔어요'를 눌러 준 사람은 `users.completed`가 1 오른다. 과반을 처음 넘길 때 한 번만.
+- 점수는 `ratings.applied_at = NULL`로만 저장한다. **매너 점수 반영은 18단계 크론**이 `findByAppliedAtIsNull()`로 모아서 한다 (피드백: 소규모 모임 평가자 익명성).
+- 같은 방에 여러 명이 동시에 내도 과반 계산이 어긋나지 않게 방 행을 잠그고(`findByIdForUpdate`) 처리한다.
+- 프론트의 '전체 만족도' 별점은 평가 테이블에 칸이 없어서 서버 모임에서는 숨겼다. '한 줄 후기'는 이번에 낸 평가 행마다 `note`로 저장한다.
+
+에러 코드: `REVIEW_NOT_ENDED`(409), `REVIEW_EXPIRED`(409), `REVIEW_ALREADY_DONE`(409), `ROOM_CANCELLED`(409), `ROOM_NOT_MEMBER`(400), `REVIEW_TARGET_INVALID`(400), `RATING_SELF`(400), `RATING_MISSING`(400), `RATING_REASON_REQUIRED`(400)
+
+다른 사람 파일 수정: `RoomMemberRepository`(3번)에 `findMineBetween`, `AttendanceRepository`(1번)에 조회 메서드 3개를 **추가만** 했다. 엔티티·schema.sql은 건드리지 않았다.
+
 ## 브랜치와 PR 규칙
 
 - `main`에는 직접 push하지 않는다. PR로만 합친다
@@ -267,4 +299,5 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - [x] 12단계: 공통 알림 메서드(`NotificationService.notify`) 및 모임 합류·탈퇴·방장 관리 API (`POST /rooms/:id/join`, `/leave`, `/cancel`, `/host`, 동시성 제어·동시간대 중복 차단·1시간 전 취소 패널티·방장 자동 위임), 모임·마이페이지·인증 화면 연동
 - [x] 13단계: 채팅 목록·메시지 페이징·읽음·오픈채팅 링크 API (`GET /chats`, `/chats/:id/messages`, `POST /chats/:id/read`, `PATCH /chats/:id/link`) 및 1:1 DM 요청·수락·거절 API (`/dm-requests`), 채팅·프로필·알림 화면 연결
 - [x] 14단계: Spring WebSocket + STOMP 실시간 채팅 (`/ws/chat`, `/app/chat.send`, `/topic/chat.{chatId}`, `/user/queue/errors`), `ChannelInterceptor` JWT·구독 권한 검증, 커밋 후 브로드캐스트 및 `@stomp/stompjs` 프론트 연동
+- [x] 16단계 참석 확인·상호 평가 (4번) — `GET /api/reviews`, `GET·POST /api/rooms/{id}/review`. 점수 반영은 18단계 크론
 - [x] 17단계: 신고·차단·알림 API (`/api/blocks`, `/api/reports`, `/api/notifications`), 신고·차단 시트·차단 목록·알림 센터 연결

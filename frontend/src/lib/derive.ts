@@ -104,6 +104,6 @@ export const pendingChange = (s: AppState, roomId: string) =>
 
 /** 종료됐지만 아직 평가하지 않은 내 모임 */
 export const unratedRooms = (s: AppState) =>
-  myRooms(s).filter((r) => roomStatus(r, s) === 'ended' && !s.rated.includes(r.id));
+  s.serverPendingReviews ? s.serverPendingReviews.filter((r) => !s.rated.includes(r.id)) : myRooms(s).filter((r) => roomStatus(r, s) === 'ended' && !s.rated.includes(r.id));
 
 export const mannerLabel = (m: number) => (m >= 38 ? '매우 좋음' : m >= 36.5 ? '좋음' : m >= 35 ? '보통' : '주의');

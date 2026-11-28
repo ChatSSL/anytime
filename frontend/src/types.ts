@@ -69,4 +69,6 @@ export interface AppState {
   myUserId?: number;
   /** 서버 차단 목록 (17단계). 로그인 전이면 undefined, 이때는 blocks(로컬)만 쓴다 */
   serverBlocked?: ServerBlocked[];
+  /** 서버에서 받은 '평가할 모임' (16단계). 로그인 전이면 undefined, 이때는 rooms(로컬)로 계산한다 */
+  serverPendingReviews?: Room[];
 }

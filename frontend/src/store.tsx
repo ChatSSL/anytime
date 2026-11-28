@@ -13,6 +13,7 @@ import { roomsApi, ServerRoomDetail, toRoom } from './api/rooms';
 import { chatsApi, dmRequestsApi, ServerDmRequest } from './api/chats';
 import { chatStomp, StompChatMessage } from './api/stomp';
 import { CreateReportBody, notificationsApi, safetyApi, toNotif } from './api/safety';
+import { reviewApi, ServerReviewResult, SubmitReviewBody } from './api/review';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -118,6 +119,24 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
     if (list) update((d) => { d.serverBlocked = list; d.blocks = list.map((b) => String(b.user.id)); });
   };
 
+  // ---- 참석 확인·평가 (16단계) ----
+  /** 평가할 모임(홈 배너)과 이미 평가한 모임 id를 받는다. 평가한 id는 rated에 합쳐서 '모임 평가하기' 버튼을 숨긴다 */
+  const loadReviews = async () => {
+    if (!authApi.isLoggedIn()) return;
+    const res = await reviewApi.pending({ quiet: true }).catch(() => null);
+    if (res) update((d) => {
+      d.serverPendingReviews = res.pending.map(toRoom);
+      const done = res.reviewedRoomIds.map(String).filter((id) => !d.rated.includes(id));
+      d.rated.push(...done);
+    });
+  };
+
+  /** 평가 뒤 완료 모임 수·매너 점수만 다시 받는다 */
+  const loadMyStats = async () => {
+    const me = await meApi.get({ quiet: true }).catch(() => null);
+    if (me) update((d) => { d.manner = me.manner; d.completed = me.completed; });
+  };
+
   /** 차단이 바뀌면 추천·모임·1:1 요청·알림에서 그 사람이 빠지거나 다시 보이므로 같이 다시 받는다 */
   const reloadAfterBlockChange = () =>
     Promise.all([loadBlocks(), loadRecommend(), loadRooms(), loadDmRequests(), loadChats(), loadNotifs()]);
@@ -194,6 +213,7 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
             d.serverChats = undefined;
             d.serverDmRequests = undefined;
             d.serverBlocked = undefined;
+            d.serverPendingReviews = undefined;
           });
           toast('계정 정보가 초기화되어 다시 로그인이 필요해요', 'info');
         }
@@ -206,7 +226,7 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         d.profile = me.profileCompleted ? toProfile(me) : null;
       });
       const hasClasses = await loadTimetable();
-      await Promise.all([loadRecommend(), loadRooms(), loadChats(), loadDmRequests(), loadNotifs(), loadBlocks()]);
+      await Promise.all([loadRecommend(), loadRooms(), loadChats(), loadDmRequests(), loadNotifs(), loadBlocks(), loadReviews()]);
       return { profileCompleted: me.profileCompleted, hasClasses };
     },
     loadRecommend,
@@ -497,6 +517,22 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       if (authApi.isLoggedIn()) notificationsApi.readAll({ quiet: true }).catch(() => loadNotifs());
     },
 
+    loadReviews,
+    /**
+     * 참석 확인 + 평가 제출 (16단계, 서버 모임).
+     * 성공하면 결과를 돌려주고, 실패하면 client.ts가 토스트를 띄우고 null.
+     * 점수는 서버 크론이 모아서 반영하므로 여기서 매너 점수를 직접 바꾸지 않는다.
+     */
+    submitReview: async (roomId: string, body: SubmitReviewBody): Promise<ServerReviewResult | null> => {
+      let res: ServerReviewResult;
+      try { res = await reviewApi.submit(Number(roomId), body); } catch { return null; }
+      update((d) => {
+        if (!d.rated.includes(roomId)) d.rated.push(roomId);
+        d.attendance[roomId] = body.presentUserIds.map(String);
+      });
+      await Promise.all([loadReviews(), loadMyStats()]);
+      return res;
+    },
     attend: (roomId: string, ids: string[]) => update((d) => { d.attendance[roomId] = ids; }),
     rate: (roomId: string, avg: number) => update((d) => {
       if (!d.rated.includes(roomId)) { d.rated.push(roomId); d.completed += 1; }
@@ -587,6 +623,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           d.serverChats = undefined;
           d.serverDmRequests = undefined;
           d.serverBlocked = undefined;
+          d.serverPendingReviews = undefined;
         });
         toast('로그인이 만료됐어요. 다시 인증해 주세요', 'info');
       },

@@ -72,7 +72,16 @@ public enum ErrorCode {
     REPORT_SELF(HttpStatus.BAD_REQUEST, "본인은 신고할 수 없어요"),
     REPORT_REASON_INVALID(HttpStatus.BAD_REQUEST, "신고 사유를 목록에서 골라 주세요"),
     REPORT_TOO_SOON(HttpStatus.TOO_MANY_REQUESTS, "같은 사람은 하루에 한 번만 신고할 수 있어요"),
-    NOTIFICATION_NOT_FOUND(HttpStatus.NOT_FOUND, "알림을 찾을 수 없어요");
+    NOTIFICATION_NOT_FOUND(HttpStatus.NOT_FOUND, "알림을 찾을 수 없어요"),
+
+    // 참석 확인·상호 평가 (16단계)
+    REVIEW_NOT_ENDED(HttpStatus.CONFLICT, "모임이 끝난 뒤에 평가할 수 있어요"),
+    REVIEW_EXPIRED(HttpStatus.CONFLICT, "평가 기간(모임 후 7일)이 지났어요"),
+    REVIEW_ALREADY_DONE(HttpStatus.CONFLICT, "이미 평가를 마친 모임이에요"),
+    REVIEW_TARGET_INVALID(HttpStatus.BAD_REQUEST, "이 모임에 함께한 사람만 고를 수 있어요"),
+    RATING_SELF(HttpStatus.BAD_REQUEST, "본인은 평가할 수 없어요"),
+    RATING_MISSING(HttpStatus.BAD_REQUEST, "왔다고 확인한 사람은 모두 한 번씩 평가해 주세요"),
+    RATING_REASON_REQUIRED(HttpStatus.BAD_REQUEST, "2점 이하는 이유를 목록에서 골라 주세요");
 
     private final HttpStatus status;
     private final String message;
