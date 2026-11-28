@@ -12,6 +12,7 @@ import { recommendApi } from './api/recommend';
 import { roomsApi, ServerRoomDetail, toRoom } from './api/rooms';
 import { chatsApi, dmRequestsApi, ServerDmRequest } from './api/chats';
 import { chatStomp, StompChatMessage } from './api/stomp';
+import { CreateReportBody, notificationsApi, safetyApi, toNotif } from './api/safety';
 
 const KEY = 'anytime-state';
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -104,6 +105,23 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
     if (reqs) update((d) => { d.serverDmRequests = reqs; });
   };
 
+  // ---- 신고·차단·알림 (17단계) ----
+  const loadNotifs = async () => {
+    if (!authApi.isLoggedIn()) return;
+    const res = await notificationsApi.list({ quiet: true }).catch(() => null);
+    if (res) update((d) => { d.notifs = res.items.map((n) => toNotif(n)); });
+  };
+
+  const loadBlocks = async () => {
+    if (!authApi.isLoggedIn()) return;
+    const list = await safetyApi.blocks({ quiet: true }).catch(() => null);
+    if (list) update((d) => { d.serverBlocked = list; d.blocks = list.map((b) => String(b.user.id)); });
+  };
+
+  /** 차단이 바뀌면 추천·모임·1:1 요청·알림에서 그 사람이 빠지거나 다시 보이므로 같이 다시 받는다 */
+  const reloadAfterBlockChange = () =>
+    Promise.all([loadBlocks(), loadRecommend(), loadRooms(), loadDmRequests(), loadChats(), loadNotifs()]);
+
   const flushTimetable = async () => {
     if (running) { dirty = true; return; }
     running = true;
@@ -175,6 +193,7 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
             d.serverRoomRecos = undefined;
             d.serverChats = undefined;
             d.serverDmRequests = undefined;
+            d.serverBlocked = undefined;
           });
           toast('계정 정보가 초기화되어 다시 로그인이 필요해요', 'info');
         }
@@ -187,13 +206,15 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
         d.profile = me.profileCompleted ? toProfile(me) : null;
       });
       const hasClasses = await loadTimetable();
-      await Promise.all([loadRecommend(), loadRooms(), loadChats(), loadDmRequests()]);
+      await Promise.all([loadRecommend(), loadRooms(), loadChats(), loadDmRequests(), loadNotifs(), loadBlocks()]);
       return { profileCompleted: me.profileCompleted, hasClasses };
     },
     loadRecommend,
     loadRooms,
     loadChats,
     loadDmRequests,
+    loadNotifs,
+    loadBlocks,
     // 시간표는 화면에 바로 반영하고 서버 저장(PUT /me/classes, /me/wanted)은 뒤에서 한다. 실패하면 서버 상태로 되돌린다
     addClass: (c: Omit<ClassBlock, 'id'>) => { update((d) => { d.classes.push({ ...c, id: uid() }); }); syncTimetable(); },
     removeClass: (id: string) => { update((d) => { d.classes = d.classes.filter((c) => c.id !== id); }); syncTimetable(); },
@@ -464,8 +485,17 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       update((d) => { const c = d.chats.find((x) => x.id === chatId); if (c) c.unread = 0; });
     },
 
-    readNotif: (id: string) => update((d) => { const n = d.notifs.find((x) => x.id === id); if (n) n.read = true; }),
-    readAllNotifs: () => update((d) => { d.notifs.forEach((n) => { n.read = true; }); }),
+    // 알림 읽음: 화면은 바로 바꾸고 서버(POST /notifications/...)는 뒤에서. 실패하면 서버 목록으로 다시 맞춘다
+    readNotif: (id: string) => {
+      update((d) => { const n = d.notifs.find((x) => x.id === id); if (n) n.read = true; });
+      if (authApi.isLoggedIn() && isServerId(id)) {
+        notificationsApi.read(Number(id), { quiet: true }).catch(() => loadNotifs());
+      }
+    },
+    readAllNotifs: () => {
+      update((d) => { d.notifs.forEach((n) => { n.read = true; }); });
+      if (authApi.isLoggedIn()) notificationsApi.readAll({ quiet: true }).catch(() => loadNotifs());
+    },
 
     attend: (roomId: string, ids: string[]) => update((d) => { d.attendance[roomId] = ids; }),
     rate: (roomId: string, avg: number) => update((d) => {
@@ -473,12 +503,47 @@ function makeActions(update: (fn: Draft) => void, getState: () => AppState, toas
       d.manner = Math.min(45, Math.round((d.manner + (avg >= 4 ? 0.2 : avg >= 3 ? 0.05 : 0)) * 10) / 10);
     }),
 
-    block: (userId: string) => { update((d) => { if (!d.blocks.includes(userId)) d.blocks.push(userId); }); toast('차단했어요. 서로 추천에서 제외돼요', 'info'); },
-    unblock: (userId: string) => update((d) => { d.blocks = d.blocks.filter((b) => b !== userId); }),
-    report: (targetId: string, reason: string, detail: string, emergency: boolean, roomId?: string) => update((d) => {
-      d.reports.push({ id: uid(), targetId, reason, detail, emergency, roomId });
-      if (emergency && !d.blocks.includes(targetId)) d.blocks.push(targetId); // 직접 연락과 추가 모임 연결을 먼저 제한
-    }),
+    /** 차단 (17단계). 성공하면 true. 실패하면 client.ts가 토스트를 띄우고 false */
+    block: async (userId: string): Promise<boolean> => {
+      if (authApi.isLoggedIn() && isServerId(userId)) {
+        try { await safetyApi.block(Number(userId)); } catch { return false; }
+        await reloadAfterBlockChange();
+      } else {
+        update((d) => { if (!d.blocks.includes(userId)) d.blocks.push(userId); });
+      }
+      toast('차단했어요. 서로 추천에서 제외돼요', 'info');
+      return true;
+    },
+    unblock: async (userId: string): Promise<boolean> => {
+      if (authApi.isLoggedIn() && isServerId(userId)) {
+        try { await safetyApi.unblock(Number(userId)); } catch { return false; }
+        await reloadAfterBlockChange();
+      } else {
+        update((d) => { d.blocks = d.blocks.filter((b) => b !== userId); });
+      }
+      toast('차단을 풀었어요', 'info');
+      return true;
+    },
+    /** 신고 (17단계). 긴급 신고면 서버가 차단까지 한다. 성공하면 true */
+    report: async (targetId: string, reason: string, detail: string, emergency: boolean, roomId?: string): Promise<boolean> => {
+      if (authApi.isLoggedIn() && isServerId(targetId)) {
+        const body: CreateReportBody = {
+          targetUserId: Number(targetId), reason, emergency,
+          detail: detail.trim() || undefined,
+          roomId: roomId && isServerId(roomId) ? Number(roomId) : undefined,
+        };
+        try {
+          const res = await safetyApi.report(body);
+          if (res.blocked) await reloadAfterBlockChange();
+        } catch { return false; }
+        return true;
+      }
+      update((d) => {
+        d.reports.push({ id: uid(), targetId, reason, detail, emergency, roomId });
+        if (emergency && !d.blocks.includes(targetId)) d.blocks.push(targetId); // 직접 연락과 추가 모임 연결을 먼저 제한
+      });
+      return true;
+    },
 
     setClock: (day: Day, min: number) => update((d) => { d.clock = { day, min }; }),
     setNotifSetting: (k: string, v: boolean) => update((d) => { d.settings.notif[k] = v; }),
@@ -521,6 +586,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           d.serverRoomRecos = undefined;
           d.serverChats = undefined;
           d.serverDmRequests = undefined;
+          d.serverBlocked = undefined;
         });
         toast('로그인이 만료됐어요. 다시 인증해 주세요', 'info');
       },

@@ -65,7 +65,14 @@ public enum ErrorCode {
     DM_REQUEST_SELF(HttpStatus.BAD_REQUEST, "본인에게는 1:1 요청을 보낼 수 없어요"),
     DM_REQUEST_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 진행 중인 1:1 요청이 있어요"),
     DM_REQUEST_ALREADY_PROCESSED(HttpStatus.CONFLICT, "이미 처리된 1:1 요청이에요"),
-    DM_CHAT_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 연결된 1:1 채팅방이 있어요");
+    DM_CHAT_ALREADY_EXISTS(HttpStatus.CONFLICT, "이미 연결된 1:1 채팅방이 있어요"),
+
+    // 신고·차단·알림 (17단계)
+    BLOCK_SELF(HttpStatus.BAD_REQUEST, "본인은 차단할 수 없어요"),
+    REPORT_SELF(HttpStatus.BAD_REQUEST, "본인은 신고할 수 없어요"),
+    REPORT_REASON_INVALID(HttpStatus.BAD_REQUEST, "신고 사유를 목록에서 골라 주세요"),
+    REPORT_TOO_SOON(HttpStatus.TOO_MANY_REQUESTS, "같은 사람은 하루에 한 번만 신고할 수 있어요"),
+    NOTIFICATION_NOT_FOUND(HttpStatus.NOT_FOUND, "알림을 찾을 수 없어요");
 
     private final HttpStatus status;
     private final String message;

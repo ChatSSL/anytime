@@ -22,7 +22,7 @@ export function Notifications() {
   const loggedIn = authApi.isLoggedIn();
   const [busyId, setBusyId] = useState<number | null>(null);
   useEffect(() => {
-    if (loggedIn) a.loadDmRequests();
+    if (loggedIn) { a.loadDmRequests(); a.loadNotifs(); }
   }, [a, loggedIn]);
 
   // 로그인 상태에서는 서버 받은 1:1 요청을 상단에 표시하고, 시드용 더미 요청(n2)은 숨긴다

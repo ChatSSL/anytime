@@ -1,5 +1,6 @@
 package com.chatssl.anytime.repository;
 
+import java.util.List;
 import java.util.Set;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -21,4 +22,12 @@ public interface BlockRepository extends JpaRepository<Block, BlockId> {
         where b.blocker.id = :userId or b.blocked.id = :userId
         """)
     Set<Long> findHiddenUserIds(@Param("userId") Long userId);
+
+    /** 내가 차단한 사람 목록 (17단계 차단 관리 화면). 차단당한 사람을 같이 읽는다 */
+    @Query("""
+        select b from Block b join fetch b.blocked
+        where b.blocker.id = :userId
+        order by b.createdAt desc
+        """)
+    List<Block> findByBlockerWithUser(@Param("userId") Long userId);
 }
