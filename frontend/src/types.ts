@@ -1,4 +1,5 @@
 import type { ServerChatSummary, ServerDmRequestList } from './api/chats';
+import type { ServerBlocked } from './api/safety';
 
 export type Day = 0 | 1 | 2 | 3 | 4;
 export const DAYS = ['월', '화', '수', '목', '금'] as const;
@@ -66,4 +67,6 @@ export interface AppState {
   serverDmRequests?: ServerDmRequestList;
   /** 로그인한 사용자의 서버 userId (14단계 STOMP 브로드캐스트 내 메시지 판별용) */
   myUserId?: number;
+  /** 서버 차단 목록 (17단계). 로그인 전이면 undefined, 이때는 blocks(로컬)만 쓴다 */
+  serverBlocked?: ServerBlocked[];
 }

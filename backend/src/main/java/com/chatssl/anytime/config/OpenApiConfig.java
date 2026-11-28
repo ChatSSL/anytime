@@ -1,7 +1,10 @@
 package com.chatssl.anytime.config;
 
+import org.springdoc.core.utils.SpringDocUtils;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import com.chatssl.anytime.common.CurrentUserId;
 
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
@@ -12,6 +15,11 @@ import io.swagger.v3.oas.models.security.SecurityScheme;
 /** Swagger: http://localhost:8080/swagger-ui.html */
 @Configuration
 public class OpenApiConfig {
+
+    static {
+        // @CurrentUserId Long userId 는 토큰에서 꺼내는 값이라 Swagger 입력 칸에서 숨긴다 (17단계 정리)
+        SpringDocUtils.getConfig().addAnnotationsToIgnore(CurrentUserId.class);
+    }
 
     private static final String BEARER = "bearer";
 

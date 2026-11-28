@@ -12,6 +12,7 @@ export const REPORT_REASONS = [
 export function SafetyMenu({ open, onClose, target, roomId }: { open: boolean; onClose: () => void; target?: User; roomId?: string }) {
   const [view, setView] = useState<'menu' | 'report' | 'done' | 'block'>('menu');
   const [reason, setReason] = useState(''); const [detail, setDetail] = useState(''); const [file, setFile] = useState('');
+  const [busy, setBusy] = useState(false);
   const { a, s } = useApp();
   const close = () => { onClose(); setTimeout(() => { setView('menu'); setReason(''); setDetail(''); setFile(''); }, 200); };
   if (!target) return null;
@@ -40,7 +41,12 @@ export function SafetyMenu({ open, onClose, target, roomId }: { open: boolean; o
             <div className="field"><label htmlFor="rf">증빙 첨부 (선택)</label>
               <input id="rf" type="file" className="input" style={{ paddingTop: 14 }} onChange={(e) => setFile(e.target.files?.[0]?.name ?? '')} />
               {file && <span className="help">{file}</span>}</div>
-            <button className="btn block" disabled={!reason} onClick={() => { a.report(target.id, reason, detail, false); setView('done'); }}>신고 접수</button>
+            <button className="btn block" disabled={!reason || busy} onClick={async () => {
+              setBusy(true);
+              const ok = await a.report(target.id, reason, detail, false, roomId);
+              setBusy(false);
+              if (ok) setView('done');
+            }}>신고 접수</button>
           </div>
         )}
         {view === 'done' && (
@@ -53,7 +59,12 @@ export function SafetyMenu({ open, onClose, target, roomId }: { open: boolean; o
         )}
       </Sheet>
       <Modal open={open && view === 'block'} onClose={() => setView('menu')} title={`${target.nick}님을 차단할까요?`}
-        actions={<><button className="btn danger block" onClick={() => { a.block(target.id); close(); }}>차단하기</button><button className="btn ghost block" onClick={() => setView('menu')}>취소</button></>}>
+        actions={<><button className="btn danger block" disabled={busy} onClick={async () => {
+          setBusy(true);
+          const ok = await a.block(target.id);
+          setBusy(false);
+          if (ok) close();
+        }}>차단하기</button><button className="btn ghost block" onClick={() => setView('menu')}>취소</button></>}>
         <p className="cap">차단하면 서로 추천에서 제외돼요. 차단 목록은 마이페이지에서 언제든 풀 수 있어요.</p>
       </Modal>
     </>
@@ -65,6 +76,7 @@ export function EmergencySheet({ open, onClose, candidates, roomId }: { open: bo
   const { a } = useApp();
   const [mode, setMode] = useState<'sos' | 'form' | 'done'>('sos');
   const [target, setTarget] = useState(''); const [detail, setDetail] = useState('');
+  const [busy, setBusy] = useState(false);
   const close = () => { onClose(); setTimeout(() => { setMode('sos'); setTarget(''); setDetail(''); }, 200); };
   return (
     <Sheet open={open} onClose={close} full title={mode === 'done' ? '긴급 신고가 접수됐어요' : '긴급 신고'}>
@@ -90,7 +102,12 @@ export function EmergencySheet({ open, onClose, candidates, roomId }: { open: bo
           </div>
           <div className="field"><label htmlFor="ed">무슨 일이 있었나요?</label>
             <textarea id="ed" className="input" rows={4} value={detail} onChange={(e) => setDetail(e.target.value)} placeholder="성희롱, 폭력, 스토킹 등 상황을 간단히 적어주세요" /></div>
-          <button className="btn danger block" disabled={!target || !detail.trim()} onClick={() => { a.report(target, '긴급 신고', detail, true, roomId); setMode('done'); }}>긴급 신고 접수</button>
+          <button className="btn danger block" disabled={!target || !detail.trim() || busy} onClick={async () => {
+            setBusy(true);
+            const ok = await a.report(target, '긴급 신고', detail, true, roomId);
+            setBusy(false);
+            if (ok) setMode('done');
+          }}>긴급 신고 접수</button>
         </div>
       )}
       {mode === 'done' && (

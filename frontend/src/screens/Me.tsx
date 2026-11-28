@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { authApi } from '../api/auth';
+import { toUser } from '../api/recommend';
 import { useApp } from '../store';
 import { Day, DAYS } from '../types';
 import { USERS } from '../data';
@@ -126,6 +127,23 @@ export function Privacy() {
 
 export function Blocked() {
   const { s, a } = useApp();
+  const loggedIn = authApi.isLoggedIn();
+  useEffect(() => { if (loggedIn) a.loadBlocks(); }, [a, loggedIn]);
+  // 로그인하면 서버 차단 목록(17단계)을 쓴다. 닉네임·아바타가 서버 프로필에 들어 있다
+  if (loggedIn && s.serverBlocked) {
+    return (
+      <div className="page narrow">
+        <TopBar title="차단 목록" />
+        {s.serverBlocked.length === 0 ? <Empty title="차단한 사용자가 없어요" text="차단하면 서로 추천에서 제외돼요." /> : (
+          <div className="list card" style={{ padding: '0 16px' }}>
+            {s.serverBlocked.map((b) => { const u = toUser(b.user); return (
+              <div key={u.id} className="listrow"><Avatar user={u} /><span className="grow"><b>{u.nick}</b></span><button className="btn secondary s" onClick={() => a.unblock(u.id)}>차단 해제</button></div>
+            ); })}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="page narrow">
       <TopBar title="차단 목록" />
