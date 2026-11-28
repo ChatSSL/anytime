@@ -81,7 +81,16 @@ public enum ErrorCode {
     REVIEW_TARGET_INVALID(HttpStatus.BAD_REQUEST, "이 모임에 함께한 사람만 고를 수 있어요"),
     RATING_SELF(HttpStatus.BAD_REQUEST, "본인은 평가할 수 없어요"),
     RATING_MISSING(HttpStatus.BAD_REQUEST, "왔다고 확인한 사람은 모두 한 번씩 평가해 주세요"),
-    RATING_REASON_REQUIRED(HttpStatus.BAD_REQUEST, "2점 이하는 이유를 목록에서 골라 주세요");
+    RATING_REASON_REQUIRED(HttpStatus.BAD_REQUEST, "2점 이하는 이유를 목록에서 골라 주세요"),
+
+    // 일정 변경 투표 (15단계)
+    CHANGE_NOT_FOUND(HttpStatus.NOT_FOUND, "일정 변경을 찾을 수 없어요"),
+    CHANGE_HOST_ONLY(HttpStatus.FORBIDDEN, "방장만 일정을 바꿀 수 있어요"),
+    CHANGE_ALREADY_PENDING(HttpStatus.CONFLICT, "답변을 기다리는 일정 변경이 이미 있어요"),
+    CHANGE_SAME(HttpStatus.BAD_REQUEST, "지금 일정과 같아요"),
+    CHANGE_ALREADY_DECIDED(HttpStatus.CONFLICT, "이미 확정되거나 취소된 일정 변경이에요"),
+    CHANGE_ALREADY_VOTED(HttpStatus.CONFLICT, "이미 답변했어요"),
+    CHANGE_HOST_NO_VOTE(HttpStatus.BAD_REQUEST, "방장은 따로 답하지 않아도 돼요");
 
     private final HttpStatus status;
     private final String message;

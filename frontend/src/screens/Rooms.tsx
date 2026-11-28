@@ -11,6 +11,7 @@ import { ChatPanel } from './Chat';
 import { authApi } from '../api/auth';
 import { roomsApi, ServerRoomDetail, toRoom } from '../api/rooms';
 import { toUser } from '../api/recommend';
+import { changesApi, ServerChange } from '../api/changes';
 
 const isServerId = (id?: string) => !!id && /^\d+$/.test(id);
 
@@ -82,6 +83,18 @@ export function RoomDetail() {
   const [cancelRoomOpen, setCancelRoomOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [nextHostId, setNextHostId] = useState('');
+  // 일정 변경 투표 (15단계, 서버 모임)
+  const [pendingCh, setPendingCh] = useState<ServerChange | null>(null);
+  const [changeOpen, setChangeOpen] = useState(false);
+  const [cDay, setCDay] = useState(0); const [cStart, setCStart] = useState(720); const [cEnd, setCEnd] = useState(780); const [cPlace, setCPlace] = useState('');
+  useEffect(() => {
+    if (!serverMode || !remote || !remote.joined) { setPendingCh(null); return; }
+    let alive = true;
+    changesApi.pending(remote.id, { quiet: true })
+      .then((c) => { if (alive) setPendingCh(c); })
+      .catch(() => { if (alive) setPendingCh(null); });
+    return () => { alive = false; };
+  }, [serverMode, remote]);
 
   if (serverMode && remote === undefined) {
     return <div className="page"><TopBar title="모임 상세" /><div className="card col"><Skeleton h={120} /><Skeleton h={24} w="60%" /><Skeleton h={16} /></div></div>;
@@ -183,6 +196,40 @@ export function RoomDetail() {
     }
   };
   const REASONS = ['휴강 또는 수업 연장', '갑작스러운 일정', '몸이 안 좋아요', '그냥 못 가요'];
+  const CHANGE_TIMES = Array.from({ length: 29 }, (_, i) => 480 + i * 30); // 08:00~22:00
+  const changeable = st === 'open' || st === 'soon' || st === 'full';
+  const sameAsNow = cDay === room.day && cStart === room.start && cEnd === room.end && (!cPlace || cPlace === room.place);
+
+  const refreshRemote = async () => {
+    if (serverMode) setRemote(await roomsApi.get(Number(id), { quiet: true }).catch(() => remote));
+  };
+
+  const openChange = () => {
+    setCDay(room.day); setCStart(room.start); setCEnd(room.end); setCPlace('');
+    setChangeOpen(true);
+  };
+
+  const doPropose = async () => {
+    if (busy || cEnd <= cStart || sameAsNow) return;
+    setBusy(true);
+    try {
+      const res = await a.proposeChange(room.id, { day: cDay, start: cStart, end: cEnd, ...(cPlace && cPlace !== room.place ? { place: cPlace } : {}) });
+      if (res) { setChangeOpen(false); await refreshRemote(); }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doVote = async (accept: boolean) => {
+    if (busy || !pendingCh) return;
+    setBusy(true);
+    try {
+      const res = await a.voteChange(pendingCh.id, accept);
+      if (res) await refreshRemote();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const info = (
     <div className="col" style={{ gap: 14 }}>
@@ -195,7 +242,19 @@ export function RoomDetail() {
       {st === 'closed' && !member && <div className="notice warn"><Icon n="clock" s={18} />모집이 마감됐어요. 시작 30분 전에 자동으로 닫혀요.</div>}
       {member && st === 'closed' && <div className="notice"><Icon n="bell" s={18} />모집이 마감됐어요. 곧 시작해요!</div>}
       {member && (st === 'soon' || st === 'closed') && remainMin > 0 && <div className="notice"><Icon n="bell" s={18} />리마인드: {dur(remainMin)} 뒤 시작해요.</div>}
-      {change && member && (
+      {serverMode && member && pendingCh && (
+        <div className="notice warn col" style={{ gap: 8 }}>
+          <span><b>{isHost ? '일정 변경 답변을 기다리고 있어요' : '방장이 일정 변경을 제안했어요'}</b><br />
+            <span className="num">{DAYS[pendingCh.currentDay]} {hm(pendingCh.currentStart)}–{hm(pendingCh.currentEnd)}</span> →{' '}
+            <b className="num">{DAYS[pendingCh.newDay]} {hm(pendingCh.newStart)}–{hm(pendingCh.newEnd)}</b>{pendingCh.newPlace ? <> · <b>{pendingCh.newPlace}</b></> : null}</span>
+          <span className="cap num">{pendingCh.accepted}/{pendingCh.required}명이 참여하겠다고 답했어요. 모두 답하면 일정이 확정돼요.</span>
+          {pendingCh.canVote && (
+            <div className="row"><button className="btn s" disabled={busy} onClick={() => doVote(true)}>그래도 참여할게요</button><button className="btn secondary s" disabled={busy} onClick={() => doVote(false)}>이번엔 빠질게요</button></div>
+          )}
+          {!isHost && pendingCh.myVote === true && <span className="cap">참여하겠다고 답했어요.</span>}
+        </div>
+      )}
+      {!serverMode && change && member && (
         <div className="notice warn col" style={{ gap: 8 }}><span><b>일정이 바뀌었어요</b> · {change.body}</span>
           <div className="row"><button className="btn s" onClick={() => a.resolveChange(room.id, true)}>그래도 참여할게요</button><button className="btn secondary s" onClick={() => a.resolveChange(room.id, false)}>이번엔 빠질게요</button></div></div>
       )}
@@ -243,6 +302,9 @@ export function RoomDetail() {
       </div>
       {isHost && st !== 'ended' && st !== 'cancelled' && (
         <div className="row wrap">
+          {serverMode && changeable && !pendingCh && (
+            <button className="btn secondary s" disabled={busy} onClick={openChange}>일정 변경</button>
+          )}
           {transferCandidates.length > 0 && (
             <button className="btn secondary s" disabled={busy} onClick={() => { setNextHostId(transferCandidates[0].id); setTransferOpen(true); }}>방장 위임</button>
           )}
@@ -294,6 +356,19 @@ export function RoomDetail() {
           ))}
         </div>
         <button className="btn block" disabled={!nextHostId || busy} onClick={doTransferHost}>{busy ? '위임 중...' : '방장 넘기기'}</button>
+      </Sheet>
+      <Sheet open={changeOpen} onClose={() => setChangeOpen(false)} title="일정 변경">
+        <p className="cap">참여자 모두가 답하면 확정돼요. 바뀐 일정이 어려운 사람은 점수 차감 없이 빠질 수 있어요.</p>
+        <div className="row">
+          <select aria-label="요일" className="input" value={cDay} onChange={(e) => setCDay(+e.target.value)}>{DAYS.map((d, i) => <option key={d} value={i}>{d}요일</option>)}</select>
+          <select aria-label="시작" className="input" value={cStart} onChange={(e) => setCStart(+e.target.value)}>{CHANGE_TIMES.slice(0, -1).map((x) => <option key={x} value={x}>{hm(x)}</option>)}</select>
+          <select aria-label="종료" className="input" value={cEnd} onChange={(e) => setCEnd(+e.target.value)}>{CHANGE_TIMES.slice(1).map((x) => <option key={x} value={x}>{hm(x)}</option>)}</select>
+        </div>
+        {cEnd <= cStart && <span className="help err">종료 시간이 시작보다 늦어야 해요.</span>}
+        <div className="field"><span className="label">장소</span>
+          <div className="chips"><Chip on={!cPlace || cPlace === room.place} onClick={() => setCPlace('')}>그대로 ({room.place})</Chip>{PLACES.filter((p) => p !== room.place).map((p) => <Chip key={p} on={cPlace === p} onClick={() => setCPlace(p)}>{p}</Chip>)}</div></div>
+        {sameAsNow && <span className="help">지금 일정과 같아요.</span>}
+        <button className="btn block" disabled={busy || cEnd <= cStart || sameAsNow} onClick={doPropose}>{busy ? '보내는 중...' : '참여자에게 물어보기'}</button>
       </Sheet>
       <SafetyMenu open={menu} onClose={() => setMenu(false)} target={host} roomId={room.id} />
       {member && <SosButton candidates={others.filter((u) => u.id !== 'staff')} roomId={room.id} />}

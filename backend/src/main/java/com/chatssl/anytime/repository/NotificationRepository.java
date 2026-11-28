@@ -42,4 +42,8 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
         @Param("relatedUserId") Long relatedUserId,
         @Param("type") NotifType type
     );
+
+    /** 15단계: 일정 변경처럼 link로 묶이는 '답변 필요' 알림 중 아직 처리 안 한 것 */
+    List<Notification> findByUserIdAndTypeAndLinkAndNeedsActionTrueAndResolvedIsNull(
+        Long userId, NotifType type, String link);
 }

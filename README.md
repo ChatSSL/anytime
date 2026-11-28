@@ -207,29 +207,32 @@ await api.post('/rooms/3/join', undefined, { quiet: true }); // 토스트 없이
 - **선저장 후 브로드캐스트**: `ChatService.sendMessage`(`@Transactional`)가 제재(`sanction >= 2`)·참여자·차단·본문(공백 금지, 1,000자 이하)을 검증하고 `messages` 저장(`saveAndFlush`) 및 보낸 사람 `last_read_at` 갱신을 커밋한 뒤, `ChatStompController`에서 `/topic/chat.{chatId}`로 `ChatBroadcastMessage`를 브로드캐스트한다
 - **프론트**: `@stomp/stompjs`와 `vite.config.ts`의 `/ws`(`ws: true`) 프록시를 추가했다. `src/api/stomp.ts`가 `beforeConnect`에서 최신 토큰을 주입하고 만료 시 `refreshAccessToken()`으로 재연결하며, `Chat.tsx`(`ServerChatPanel`·`ChatList`)·`store.tsx`에서 실시간 메시지 수신·중복 제거·`myUserId` 기준 내 말풍선 판별·읽음 동기화·에러 토스트·로그아웃 시 소켓 종료를 처리한다
 
-## 신고·차단·알림 (17단계)
+## 일정 변경 투표 (15단계)
 
-| API | 설명 |
-| --- | --- |
-| `GET /api/blocks` | 내가 차단한 사람, 최근 순. `[{user, blockedAt}]`. `user`는 `GET /users/{id}`와 같은 공개 프로필 |
-| `POST /api/blocks` | `{"targetUserId": 2}` 차단. 이미 차단했으면 그대로 201. 본인은 `400 BLOCK_SELF` |
-| `DELETE /api/blocks/{targetUserId}` | 차단 해제. 차단한 적이 없어도 204 |
-| `POST /api/reports` | `{"targetUserId", "reason", "detail"?, "roomId"?, "emergency"?}`. `reason`은 프론트 `REPORT_REASONS` 중 하나(긴급 신고는 `"긴급 신고"`), 아니면 `400 REPORT_REASON_INVALID`. 같은 사람은 24시간에 한 번(`429 REPORT_TOO_SOON`, 긴급 신고는 예외). **긴급 신고는 바로 차단까지 한다** (`blocked: true`) |
-| `GET /api/notifications` | 내 알림 최근 100개 `{items: [...], unreadCount}`. `type`·`resolved`는 프론트와 같은 소문자. 차단 관계인 사람이 관련된 알림(1:1 요청 등)은 빠진다 |
-| `POST /api/notifications/{id}/read` | 하나 읽음. 남의 알림이면 `404 NOTIFICATION_NOT_FOUND` |
-| `POST /api/notifications/read-all` | 모두 읽음 `{"updated": 바뀐 개수}` |
+방장이 모임 일정(요일·시간·장소)을 바꾸자고 하면, 참여자가 '그래도 참여할게요' / '이번엔 빠질게요'로 답한다. 답해야 하는 사람이 **모두** 답하면 일정이 확정된다.
 
-- 차단은 `blocks`에 넣기만 한다. 추천(10단계)·1:1 요청(13단계)이 `BlockRepository.findHiddenUserIds()`로 이미 양방향 필터를 하고 있다
-- 신고는 운영팀만 보므로 상대에게 알림을 보내지 않는다
-- 알림을 **만드는** 쪽은 3번의 `NotificationService.notify(...)`, **보는** 쪽은 `notification/NotificationInboxService` (17단계)
-- Swagger에서 `@CurrentUserId` 파라미터(`userId` 입력 칸)를 숨겼다 (`config/OpenApiConfig`). 토큰에서 꺼내는 값이라 입력할 필요가 없다
-- 프론트: `src/api/safety.ts`
-  - 로그인하면 앱 시작 때 `GET /notifications`, `GET /blocks`를 받는다. 알림 화면·차단 목록 화면을 열 때도 다시 받는다
-  - `store.tsx`의 `block`·`unblock`·`report`는 서버를 거치고 성공하면 `true`를 돌려준다. 차단이 바뀌면 추천·모임·채팅·1:1 요청·알림을 다시 받는다
-  - `readNotif`·`readAllNotifs`는 화면을 먼저 바꾸고 서버 저장은 뒤에서 한다
-  - 차단 목록 화면(`Me.tsx`의 `Blocked`)은 로그인하면 서버 목록(`serverBlocked`)을 쓴다
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| POST | `/api/rooms/{roomId}/changes` | 방장이 제안 (201). `{"day":4,"start":750,"end":810,"place":"도서관 앞 카페"}`, place는 생략하면 그대로 |
+| GET | `/api/rooms/{roomId}/changes/pending` | 답변을 기다리는 변경 (없으면 204). 모임 상세 배너용 |
+| POST | `/api/changes/{changeId}/vote` | 참여자 답변 `{"accept": true}` / `{"accept": false}` |
 
-## 16단계: 참석 확인·상호 평가 (4번)
+규칙
+- 방장만 제안할 수 있고(403 `CHANGE_HOST_ONLY`), 한 모임에 대기 중인 제안은 하나만(409 `CHANGE_ALREADY_PENDING`).
+- 모집 중·마감 임박·정원 참 상태에서만 바꿀 수 있다. 시작 30분 전부터는 409 `ROOM_CLOSED`.
+- 제안하면 방장을 뺀 참여자에게 `CHANGE` 알림(답변 필요)이 가고, 모임 채팅방에 시스템 메시지가 남는다.
+- **답해야 하는 사람** = 지금 참여 중인 사람 중 방장과 제안 뒤에 들어온 사람을 뺀 사람. 다른 참여자가 없으면 제안 즉시 확정.
+- `accept=false`는 모임에서 나간다. 방장 사정으로 바뀐 것이라 **매너 점수는 깎지 않고** `cancel_log`에 0점(`일정 변경으로 불참`)으로만 남긴다.
+- 다 답하면 `rooms`의 요일·시간·`meet_date`(그 요일의 다음 날짜)·장소를 바꾸고 `room_changes.status = APPLIED`, 남은 참여자 모두에게 '일정이 확정됐어요' 알림.
+- 답하면 내 '답변 필요' 알림은 처리됨(수락/거절)으로 바뀐다.
+- 모임 시작 전까지 다 답하지 않은 제안은 18단계 크론에서 `REJECTED`로 정리한다(일정은 그대로).
+
+프론트: 모임 상세에서 방장에게 **일정 변경** 버튼(요일·시간·장소 선택), 참여자에게는 '방장이 일정 변경을 제안했어요' 배너와 답변 버튼.
+
+다른 사람 파일 수정: `NotificationRepository`(3번)에 조회 메서드 1개를 **추가만** 했다. 엔티티·schema.sql은 건드리지 않았다.
+
+
+## 참석 확인·상호 평가 (16단계)
 
 모임이 끝난 뒤(지금 시각이 종료 시각을 지났거나 status=DONE) **7일 안에**, 그 모임에 남아 있던 사람이 **한 번** 낼 수 있다.
 
@@ -259,6 +262,28 @@ POST 본문 예시
 에러 코드: `REVIEW_NOT_ENDED`(409), `REVIEW_EXPIRED`(409), `REVIEW_ALREADY_DONE`(409), `ROOM_CANCELLED`(409), `ROOM_NOT_MEMBER`(400), `REVIEW_TARGET_INVALID`(400), `RATING_SELF`(400), `RATING_MISSING`(400), `RATING_REASON_REQUIRED`(400)
 
 다른 사람 파일 수정: `RoomMemberRepository`(3번)에 `findMineBetween`, `AttendanceRepository`(1번)에 조회 메서드 3개를 **추가만** 했다. 엔티티·schema.sql은 건드리지 않았다.
+
+## 신고·차단·알림 (17단계)
+
+| API | 설명 |
+| --- | --- |
+| `GET /api/blocks` | 내가 차단한 사람, 최근 순. `[{user, blockedAt}]`. `user`는 `GET /users/{id}`와 같은 공개 프로필 |
+| `POST /api/blocks` | `{"targetUserId": 2}` 차단. 이미 차단했으면 그대로 201. 본인은 `400 BLOCK_SELF` |
+| `DELETE /api/blocks/{targetUserId}` | 차단 해제. 차단한 적이 없어도 204 |
+| `POST /api/reports` | `{"targetUserId", "reason", "detail"?, "roomId"?, "emergency"?}`. `reason`은 프론트 `REPORT_REASONS` 중 하나(긴급 신고는 `"긴급 신고"`), 아니면 `400 REPORT_REASON_INVALID`. 같은 사람은 24시간에 한 번(`429 REPORT_TOO_SOON`, 긴급 신고는 예외). **긴급 신고는 바로 차단까지 한다** (`blocked: true`) |
+| `GET /api/notifications` | 내 알림 최근 100개 `{items: [...], unreadCount}`. `type`·`resolved`는 프론트와 같은 소문자. 차단 관계인 사람이 관련된 알림(1:1 요청 등)은 빠진다 |
+| `POST /api/notifications/{id}/read` | 하나 읽음. 남의 알림이면 `404 NOTIFICATION_NOT_FOUND` |
+| `POST /api/notifications/read-all` | 모두 읽음 `{"updated": 바뀐 개수}` |
+
+- 차단은 `blocks`에 넣기만 한다. 추천(10단계)·1:1 요청(13단계)이 `BlockRepository.findHiddenUserIds()`로 이미 양방향 필터를 하고 있다
+- 신고는 운영팀만 보므로 상대에게 알림을 보내지 않는다
+- 알림을 **만드는** 쪽은 3번의 `NotificationService.notify(...)`, **보는** 쪽은 `notification/NotificationInboxService` (17단계)
+- Swagger에서 `@CurrentUserId` 파라미터(`userId` 입력 칸)를 숨겼다 (`config/OpenApiConfig`). 토큰에서 꺼내는 값이라 입력할 필요가 없다
+- 프론트: `src/api/safety.ts`
+  - 로그인하면 앱 시작 때 `GET /notifications`, `GET /blocks`를 받는다. 알림 화면·차단 목록 화면을 열 때도 다시 받는다
+  - `store.tsx`의 `block`·`unblock`·`report`는 서버를 거치고 성공하면 `true`를 돌려준다. 차단이 바뀌면 추천·모임·채팅·1:1 요청·알림을 다시 받는다
+  - `readNotif`·`readAllNotifs`는 화면을 먼저 바꾸고 서버 저장은 뒤에서 한다
+  - 차단 목록 화면(`Me.tsx`의 `Blocked`)은 로그인하면 서버 목록(`serverBlocked`)을 쓴다
 
 ## 브랜치와 PR 규칙
 
@@ -299,5 +324,6 @@ POST 본문 예시
 - [x] 12단계: 공통 알림 메서드(`NotificationService.notify`) 및 모임 합류·탈퇴·방장 관리 API (`POST /rooms/:id/join`, `/leave`, `/cancel`, `/host`, 동시성 제어·동시간대 중복 차단·1시간 전 취소 패널티·방장 자동 위임), 모임·마이페이지·인증 화면 연동
 - [x] 13단계: 채팅 목록·메시지 페이징·읽음·오픈채팅 링크 API (`GET /chats`, `/chats/:id/messages`, `POST /chats/:id/read`, `PATCH /chats/:id/link`) 및 1:1 DM 요청·수락·거절 API (`/dm-requests`), 채팅·프로필·알림 화면 연결
 - [x] 14단계: Spring WebSocket + STOMP 실시간 채팅 (`/ws/chat`, `/app/chat.send`, `/topic/chat.{chatId}`, `/user/queue/errors`), `ChannelInterceptor` JWT·구독 권한 검증, 커밋 후 브로드캐스트 및 `@stomp/stompjs` 프론트 연동
+- [x] 15단계 일정 변경 투표 (4번) — `POST /api/rooms/{id}/changes`, `GET .../changes/pending`, `POST /api/changes/{id}/vote`
 - [x] 16단계 참석 확인·상호 평가 (4번) — `GET /api/reviews`, `GET·POST /api/rooms/{id}/review`. 점수 반영은 18단계 크론
 - [x] 17단계: 신고·차단·알림 API (`/api/blocks`, `/api/reports`, `/api/notifications`), 신고·차단 시트·차단 목록·알림 센터 연결
